@@ -56,13 +56,17 @@ pacstrap -K $CHROOT $BASE_PKGS
 #add console to linux kernel cmdline
 python3 -c """
 with open('$CHROOT/etc/default/grub') as f: lines = f.readlines()
+#remove dflts
 for i,l in enumerate(lines):
-	if l.find('GRUB_TIMEOUT') >= 0:
-		lines[i] = 'GRUB_TIMEOUT=1'
-		continue
-	if l.find('GRUB_CMDLINE_LINUX_DEFAULT') >= 0:
-		lines[i] = 'GRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=5 console=ttyS0,115200 console=tty0\"'
-		break
+	if any(x in l for x in ('GRUB_TIMEOUT', 'GRUB_CMDLINE_LINUX_DEFAULT',
+		'GRUB_TERMINAL', 'GRUB_SERIAL_COMMAND')):
+		lines[i]=''
+
+lines.append('GRUB_TIMEOUT=1')
+lines.append('GRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=5 console=ttyS0,115200\"')
+
+lines.append('GRUB_TERMINAL=\"console serial\"')
+lines.append('GRUB_SERIAL_COMMAND=\"serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\"')
 
 with open('$CHROOT/etc/default/grub', 'w') as f: f.write('\n'.join(lines))
 
