@@ -1,4 +1,4 @@
-#!/bin/bash
+##!/bin/bash
 #pyQemu, QEMU command-line and tap scripts generator for minimal&secure virtual machines creation.
 #Copyright (C) 2025 Andrea Di Iorio
 #
@@ -16,83 +16,116 @@
 #along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-set -ex
+set -e
+[[ $DEBUG ]] && set -x && export DEBUG="set -x"
 
 umask 0022
+. utils.sh
 
 CHROOT="${CHROOT-/mnt/tmp}"
 INIT_CHROOT="${INIT_CHROOT-/root/init.sh}"
-VM_DISK_IMG="${VM_DISK_IMG-vm.raw}"
+VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
 VM_DISK_SZ=${VM_DISK_SZ-'3g'}
 
-BASE_PKGS="base linux-firmware linux-hardened grub dhcpcd sudo"
-BASE_PKGS+=" lsof util-linux which python3 m4 patch man"
-EXTRA_PKGS0="dhcpcd curl vim git openssh tmux tree wget pcre2 pcre openbsd-netcat fish"
-EXTRA_PKGS1="sqlite diffutils cryptsetup ctags iptables usbutils usb_modeswitch usbguard usbview xdp-tools nvim"
-EXTRA_PKGS1+=" xf86-video-fbdev xorg xorg-xinit i3 firefox grub"
-touch $VM_DISK_IMG
-truncate -s $VM_DISK_SZ $VM_DISK_IMG
+ARCH_BASE_PKGS="base linux-firmware linux-hardened grub dhcpcd sudo"
+ARCH_BASE_PKGS+=" lsof util-linux which python3 m4 patch man"
+ARCH_EXTRA_PKGS0="dhcpcd curl vim git openssh tmux tree wget pcre2 pcre openbsd-netcat fish"
+ARCH_EXTRA_PKGS1="sqlite diffutils cryptsetup ctags iptables usbutils usb_modeswitch usbguard usbview xdp-tools nvim"
+ARCH_EXTRA_PKGS1+=" xf86-video-fbdev xorg xorg-xinit i3 firefox grub"
 
-fdisk $VM_DISK_IMG << EOF
-o
-n
+DEBIAN_BASE_PKGS="linux-base systemd systemd-sysv initramfs-tools"
 
+export DISTRO=${DISTRO-"ARCH"}
 
+[[ -r "$VM_DISK_IMG" ]] && echo "$VM_DISK_IMG will be created, so must not be present!" && exit 1
 
-
-w
-EOF
-fdisk -l $VM_DISK_IMG
-
-losetup -P -f  $VM_DISK_IMG
-
-mkfs.ext4 /dev/loop0p1
-mkdir -p $CHROOT
-mount /dev/loop0p1 $CHROOT
-
-trap "umount $CHROOT || (killall gpg-agent && umount $CHROOT); losetup -D" EXIT
-pacstrap -K $CHROOT $BASE_PKGS
-
-#add console to linux kernel cmdline
-python3 -c """
-with open('$CHROOT/etc/default/grub') as f: lines = f.readlines()
-#remove dflts
-for i,l in enumerate(lines):
-	if any(x in l for x in ('GRUB_TIMEOUT', 'GRUB_CMDLINE_LINUX_DEFAULT',
-		'GRUB_TERMINAL', 'GRUB_SERIAL_COMMAND')):
-		lines[i]=''
-
-lines.append('GRUB_TIMEOUT=1')
-lines.append('GRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=5 console=ttyS0,115200\"')
-
-lines.append('GRUB_TERMINAL=\"console serial\"')
-lines.append('GRUB_SERIAL_COMMAND=\"serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\"')
-
-with open('$CHROOT/etc/default/grub', 'w') as f: f.write('\n'.join(lines))
-
-"""
-
+function ARCHInitChroot
+{
 echo """
-#!/bin/bash
-echo -n test | passwd -s
-
-useradd u
-echo -n test | passwd -s u
-mkdir -p /home/u && chown u:u -R /home/u
-
-pacman -Syu --noconfirm $EXTRA_PKGS0 #$EXTRA_PKGS1
+pacman -Syu --noconfirm $ARCH_EXTRA_PKGS0 #$ARCH_EXTRA_PKGS1
 
 mkinitcpio -P
 
 mkdir -p /boot/grub
 grub-install --target=i386-pc /dev/loop0
 grub-mkconfig -o /boot/grub/grub.cfg
-""" > $CHROOT/$INIT_CHROOT
-chmod 0700 $CHROOT/$INIT_CHROOT
-arch-chroot $CHROOT $INIT_CHROOT
+"""
+}
 
+
+function DEBIANInitChroot
+{
+echo """
+apt install $DEBIAN_BASE_PKGS
+
+##mkinitcpio -P
+
+mkdir -p /boot/grub
+grub-install --target=i386-pc /dev/loop0
+grub-mkconfig -o /boot/grub/grub.cfg
+"""
+}
+
+function ARCHBasePrepare
+{
+pacstrap -K $CHROOT $ARCH_BASE_PKGS
+}
+
+
+function DEBIANBasePrepare
+{
+debootstrap --variant=buildd --merged-usr --include=grub2 stable "$CHROOT"
+}
+
+export UEFI=1
+export DISTRO=DEBIAN
+
+### MAIN ###
+export LOOPDEV=$(losetup -f)
+
+touch $VM_DISK_IMG
+truncate -s $VM_DISK_SZ $VM_DISK_IMG
+
+mkdir -p $CHROOT
+
+if [[ $UEFI ]]; then
+	formatUEFI "$VM_DISK_IMG"
+	mount ${LOOPDEV}p2 $CHROOT
+	mkdir $CHROOT/boot
+	mount ${LOOPDEV}p1 $CHROOT/boot
+else
+	formatBiosMBR "$VM_DISK_IMG"
+	mount ${LOOPDEV}p1 $CHROOT
+fi
+
+trap "umount $CHROOT/boot $CHROOT || (killall gpg-agent && umount $CHROOT); losetup -D" EXIT
+lsblk -f "$LOOPDEV";read
+${DISTRO}BasePrepare
+grubSetSerialConsoleQemu "$CHROOT"
+
+# CHROOT SETUP
+# users
+echo """
+#!/bin/bash
+$DEBUG
+echo -n test | passwd -s
+
+useradd u
+echo -n test | passwd -s u
+mkdir -p /home/u && chown u:u -R /home/u
+""" > "$CHROOT/$INIT_CHROOT"
+
+lsblk -f "$LOOPDEV";read
+${DISTRO}InitChroot	>> "$CHROOT/$INIT_CHROOT"
+
+if [[ $UEFI ]]; then
+	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p1 --efi-directory=DIR $CHROOT/boot" >>  "$CHROOT/$INIT_CHROOT"
+fi
+
+chmod 0700 $CHROOT/$INIT_CHROOT
+__chroot $CHROOT $INIT_CHROOT $DISTRO
 
 
 #to me gpg stays pending even at this point... blocking umount
-pgrep -fa gpg | grep "$CHROOT" | awk '{print $1}' | xargs kill
+pgrep -f gpg | grep "$CHROOT" | xargs kill
 sleep 1
