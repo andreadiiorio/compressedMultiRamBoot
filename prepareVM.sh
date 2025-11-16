@@ -17,7 +17,10 @@
 
 
 set -e
-[[ $DEBUG ]] && set -x && export DEBUG="set -x"
+
+export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/
+[[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x"
+##TODO DBG
 
 umask 0022
 . utils.sh
@@ -56,6 +59,8 @@ grub-mkconfig -o /boot/grub/grub.cfg
 function DEBIANInitChroot
 {
 echo """
+export PATH=\$PATH:/sbin
+
 apt install $DEBIAN_BASE_PKGS
 
 ##mkinitcpio -P
@@ -74,6 +79,7 @@ pacstrap -K $CHROOT $ARCH_BASE_PKGS
 
 function DEBIANBasePrepare
 {
+[[ -d "$DEB_CACHE" ]] && cp -a "$DEB_CACHE"/* "$CHROOT" && return 0
 debootstrap --variant=buildd --merged-usr --include=grub2 stable "$CHROOT"
 }
 
@@ -90,16 +96,15 @@ mkdir -p $CHROOT
 
 if [[ $UEFI ]]; then
 	formatUEFI "$VM_DISK_IMG"
-	mount ${LOOPDEV}p2 $CHROOT
-	mkdir $CHROOT/boot
-	mount ${LOOPDEV}p1 $CHROOT/boot
+	mountUEFI ${LOOPDEV} "$CHROOT"
 else
 	formatBiosMBR "$VM_DISK_IMG"
 	mount ${LOOPDEV}p1 $CHROOT
 fi
+trap "__chrootExit $CHROOT $DISTRO|| (killall gpg-agent && umount $CHROOT); losetup -D" EXIT
+##[[ $DEBUG ]] && trap "" EXIT
 
-trap "umount $CHROOT/boot $CHROOT || (killall gpg-agent && umount $CHROOT); losetup -D" EXIT
-lsblk -f "$LOOPDEV";read
+[[ $DEBUG ]] && sgdisk -p "$LOOPDEV"; lsblk -f "$LOOPDEV";read -p "the above parts layout is good ?? "
 ${DISTRO}BasePrepare
 grubSetSerialConsoleQemu "$CHROOT"
 
@@ -114,18 +119,18 @@ useradd u
 echo -n test | passwd -s u
 mkdir -p /home/u && chown u:u -R /home/u
 """ > "$CHROOT/$INIT_CHROOT"
+cat "$CHROOT/$INIT_CHROOT"
 
-lsblk -f "$LOOPDEV";read
 ${DISTRO}InitChroot	>> "$CHROOT/$INIT_CHROOT"
 
 if [[ $UEFI ]]; then
-	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p1 --efi-directory=DIR $CHROOT/boot" >>  "$CHROOT/$INIT_CHROOT"
+	echo "grub-install -v --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=$CHROOT/boot" >>  "$CHROOT/$INIT_CHROOT"
 fi
 
 chmod 0700 $CHROOT/$INIT_CHROOT
 __chroot $CHROOT $INIT_CHROOT $DISTRO
 
-
+[[ $DEBUG ]] && read
 #to me gpg stays pending even at this point... blocking umount
 pgrep -f gpg | grep "$CHROOT" | xargs kill
 sleep 1
