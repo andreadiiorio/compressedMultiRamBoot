@@ -68,8 +68,8 @@ function mountUEFI
 	local -r chroot=$2
 
 	mount ${loop}p3 "$chroot"
-	mkdir $CHROOT/boot
-	mount ${LOOPDEV}p2 $CHROOT/boot
+	mkdir -p $chroot/boot
+	mount ${LOOPDEV}p2 $chroot/boot
 }
 
 ## SYS-MISC
@@ -107,7 +107,7 @@ local -r chroot=$1
 local -r init_chroot=$2
 local -r distro=$3
 
-if [[ $distro == "ARCH" ]]; then
+if [[ -r $(which arch-chroot) ]]; then
 	arch-chroot $chroot $init_chroot
 else
 	mount --bind /sys $chroot/sys
@@ -153,9 +153,15 @@ losetup -D
 read -p "formatUEFI ENDED"
 }
 
+function mountTest
+{
+	losetup -P -f /tmp/vm.raw
+	mountUEFI /dev/loop0 /mnt/tmp
+}
 ##if __name__ == __main__
 if [[ $0 == ${BASH_SOURCE[0]} ]]; then
 
-formatTests
+read -p mountTest; mountTest; lsblk
+read -p formatTests; formatTests
 
 fi

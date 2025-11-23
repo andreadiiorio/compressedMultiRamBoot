@@ -18,25 +18,36 @@
 
 set -e
 
-export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/
+#export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/
 [[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x"
 ##TODO DBG
 
 umask 0022
-. utils.sh
+
+SCRIPTDIR=$(dirname ${BASH_SOURCE[@]})
+. $SCRIPTDIR/utils.sh
 
 CHROOT="${CHROOT-/mnt/tmp}"
 INIT_CHROOT="${INIT_CHROOT-/root/init.sh}"
 VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
 VM_DISK_SZ=${VM_DISK_SZ-'3g'}
 
+#deb/arch, most simple common names
+BASE_PKGS_0="dhcpcd curl vim git tmux tree wget fish"
+
 ARCH_BASE_PKGS="base linux-firmware linux-hardened grub dhcpcd sudo"
 ARCH_BASE_PKGS+=" lsof util-linux which python3 m4 patch man"
-ARCH_EXTRA_PKGS0="dhcpcd curl vim git openssh tmux tree wget pcre2 pcre openbsd-netcat fish"
+ARCH_EXTRA_PKGS0=$BASE_PKGS_0
+ARCH_EXTRA_PKGS0+=" openssh pcre2 pcre openbsd-netcat"
 ARCH_EXTRA_PKGS1="sqlite diffutils cryptsetup ctags iptables usbutils usb_modeswitch usbguard usbview xdp-tools nvim"
 ARCH_EXTRA_PKGS1+=" xf86-video-fbdev xorg xorg-xinit i3 firefox grub"
 
-DEBIAN_BASE_PKGS="linux-base systemd systemd-sysv initramfs-tools"
+DEBIAN_BASE_PKGS="linux-base linux-image-amd64 systemd systemd-sysv initramfs-tools"
+DEBIAN_BASE_PKGS+=" grub-efi-amd64-signed"
+DEBIAN_BASE_PKGS+=" login sudo passwd"
+DEBIAN_EXTRA_PKGS0=$BASE_PKGS_0
+DEBIAN_EXTRA_PKGS0+=" openssh-server netcat-openbsd pcre2-utils"
+
 
 export DISTRO=${DISTRO-"ARCH"}
 
@@ -61,7 +72,7 @@ function DEBIANInitChroot
 echo """
 export PATH=\$PATH:/sbin
 
-apt install $DEBIAN_BASE_PKGS
+apt install -y $DEBIAN_BASE_PKGS $DEBIAN_EXTRA_PKGS0
 
 ##mkinitcpio -P
 
@@ -80,7 +91,8 @@ pacstrap -K $CHROOT $ARCH_BASE_PKGS
 function DEBIANBasePrepare
 {
 [[ -d "$DEB_CACHE" ]] && cp -a "$DEB_CACHE"/* "$CHROOT" && return 0
-debootstrap --variant=buildd --merged-usr --include=grub2 stable "$CHROOT"
+debootstrap --verbose --variant=buildd --merged-usr --include=grub2 stable "$CHROOT"
+
 }
 
 export UEFI=1
@@ -113,6 +125,9 @@ grubSetSerialConsoleQemu "$CHROOT"
 echo """
 #!/bin/bash
 $DEBUG
+set -e
+
+export PATH=\$PATH:/sbin
 echo -n test | passwd -s
 
 useradd u
@@ -124,13 +139,13 @@ cat "$CHROOT/$INIT_CHROOT"
 ${DISTRO}InitChroot	>> "$CHROOT/$INIT_CHROOT"
 
 if [[ $UEFI ]]; then
-	echo "grub-install -v --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=$CHROOT/boot" >>  "$CHROOT/$INIT_CHROOT"
+	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" >>  "$CHROOT/$INIT_CHROOT"
 fi
 
 chmod 0700 $CHROOT/$INIT_CHROOT
 __chroot $CHROOT $INIT_CHROOT $DISTRO
 
-[[ $DEBUG ]] && read
+[[ $DEBUG ]] && read -p OKKKK
 #to me gpg stays pending even at this point... blocking umount
-pgrep -f gpg | grep "$CHROOT" | xargs kill
+pgrep -f gpg | grep "$CHROOT" | xargs kill || true
 sleep 1
