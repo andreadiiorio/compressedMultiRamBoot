@@ -18,7 +18,7 @@
 
 set -e
 
-#export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/
+export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/
 [[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x"
 ##TODO DBG
 
@@ -31,6 +31,10 @@ CHROOT="${CHROOT-/mnt/tmp}"
 INIT_CHROOT="${INIT_CHROOT-/root/init.sh}"
 VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
 VM_DISK_SZ=${VM_DISK_SZ-'3g'}
+
+UEFI=${UEFI-1}
+DISTRO=${DISTRO-DEBIAN}
+LOOPDEV=${LOOPDEV-$(losetup -f)}
 
 #deb/arch, most simple common names
 BASE_PKGS_0="dhcpcd curl vim git tmux tree wget fish"
@@ -50,8 +54,6 @@ DEBIAN_EXTRA_PKGS0+=" openssh-server netcat-openbsd pcre2-utils"
 
 
 export DISTRO=${DISTRO-"ARCH"}
-
-[[ -r "$VM_DISK_IMG" ]] && echo "$VM_DISK_IMG will be created, so must not be present!" && exit 1
 
 function ARCHInitChroot
 {
@@ -82,6 +84,23 @@ grub-mkconfig -o /boot/grub/grub.cfg
 """
 }
 
+__ARCH_RAMBOOT="initramfs/arch/ramBoot"
+function ARCHRamboot
+{
+cp "$__ARCH_RAMBOOT/mkinitcpio.conf"	"$CHROOT/etc"
+cp "$__ARCH_RAMBOOT/ramBoot"		"/etc/initcpio/hooks"
+touch "$CHROOT/etc/initcpio/install/ramboot"
+}
+
+__DEB_RAMBOOT="initramfs/deb/ramBoot"
+function DEBRamboot
+{
+return		#TODO TODO
+cp "$__DEB_RAMBOOT/mkinitcpio.conf"	"$CHROOT/etc"
+cp "$__DEB_RAMBOOT/ramBoot"		"/etc/initcpio/hooks"
+touch "$CHROOT/etc/initcpio/install/ramboot"
+}
+
 function ARCHBasePrepare
 {
 pacstrap -K $CHROOT $ARCH_BASE_PKGS
@@ -95,11 +114,11 @@ debootstrap --verbose --variant=buildd --merged-usr --include=grub2 stable "$CHR
 
 }
 
-export UEFI=1
-export DISTRO=DEBIAN
+##### ##### ##### 	MAIN 		#####  #####  #####
+##if __name__ != __main__
+[[ $0 != ${BASH_SOURCE[0]} ]] && return
 
-### MAIN ###
-export LOOPDEV=$(losetup -f)
+[[ -r "$VM_DISK_IMG" ]] && echo "$VM_DISK_IMG will be created, so must not be present!" && exit 1
 
 touch $VM_DISK_IMG
 truncate -s $VM_DISK_SZ $VM_DISK_IMG
@@ -116,7 +135,11 @@ fi
 trap "__chrootExit $CHROOT $DISTRO|| (killall gpg-agent && umount $CHROOT); losetup -D" EXIT
 ##[[ $DEBUG ]] && trap "" EXIT
 
-[[ $DEBUG ]] && sgdisk -p "$LOOPDEV"; lsblk -f "$LOOPDEV";read -p "the above parts layout is good ?? "
+if [[ $DEBUG ]]; then
+	sgdisk -p "$LOOPDEV"; lsblk -f "$LOOPDEV";
+	read -p "the above parts layout is good ?? "
+fi
+
 ${DISTRO}BasePrepare
 grubSetSerialConsoleQemu "$CHROOT"
 
@@ -126,23 +149,25 @@ echo """
 #!/bin/bash
 $DEBUG
 set -e
-
 export PATH=\$PATH:/sbin
+
+$( ${DISTRO}InitChroot )
 echo -n test | passwd -s
 
 useradd u
 echo -n test | passwd -s u
 mkdir -p /home/u && chown u:u -R /home/u
 """ > "$CHROOT/$INIT_CHROOT"
+
 cat "$CHROOT/$INIT_CHROOT"
 
-${DISTRO}InitChroot	>> "$CHROOT/$INIT_CHROOT"
 
 if [[ $UEFI ]]; then
 	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" >>  "$CHROOT/$INIT_CHROOT"
 fi
 
 chmod 0700 $CHROOT/$INIT_CHROOT
+[[ $RAMBOOT ]] && ${DISTRO}Ramboot
 __chroot $CHROOT $INIT_CHROOT $DISTRO
 
 [[ $DEBUG ]] && read -p OKKKK
