@@ -48,7 +48,7 @@ function __formatUEFI
 	sgdisk -n 2:0:+700M -t 2:ef00 -c 2:"EFI" $disk
 	# Create rootfs partition using remaining space, 8300: Linux filesystem
 	sgdisk -n 3:0:+3G   -t 3:8300 -c 3:"ROOTFS0" $disk
-	sgdisk -n 4:0:+2G   -t 4:8300 -c 4:"ROOTFS1" $disk
+	sgdisk -n 4:0:+3G   -t 4:8300 -c 4:"ROOTFS1" $disk
 
 }
 function formatUEFI

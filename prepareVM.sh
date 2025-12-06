@@ -30,7 +30,7 @@ SCRIPTDIR=$(dirname ${BASH_SOURCE[@]})
 CHROOT="${CHROOT-/mnt/tmp}"
 INIT_CHROOT="${INIT_CHROOT-/root/init.sh}"
 VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
-VM_DISK_SZ=${VM_DISK_SZ-'6g'}
+VM_DISK_SZ=${VM_DISK_SZ-'7g'}
 
 UEFI=${UEFI-1}
 LOOPDEV=${LOOPDEV-$(losetup -f)}
@@ -75,7 +75,7 @@ export PATH=\$PATH:/sbin
 
 apt install -y $DEBIAN_BASE_PKGS $DEBIAN_EXTRA_PKGS0
 
-##mkinitcpio -P
+##update-initramfs
 
 mkdir -p /boot/grub
 grub-install --target=i386-pc /dev/loop0
@@ -141,7 +141,7 @@ if [[ $DEBUG ]]; then
 fi
 
 p=$UEFI_FIRST_ROOTFS_PART
-for distro in ARCH DEBIAN; do
+for distro in DEBIAN ARCH; do
 	mountUEFI ${LOOPDEV} "$CHROOT" $((p++))
 
 	${distro}BasePrepare
@@ -174,10 +174,11 @@ for distro in ARCH DEBIAN; do
 	[[ $RAMBOOT ]] && ${distro}Ramboot
 	__chroot $CHROOT $INIT_CHROOT $distro
 
-	[[ $DEBUG ]] && read -p OKKKK
+	[[ $DEBUG ]] && read -p "Done $distro!!!! press anything to continue!"
 	#to me gpg stays pending even at this point... blocking umount
 	pgrep -f gpg | grep "$CHROOT" | xargs kill || true
 	sleep 1
 
+	cp $CHROOT/boot/grub/grub.cfg $CHROOT/boot/grub/grub.cfg.$distro
 	__umount "$CHROOT"
 done
