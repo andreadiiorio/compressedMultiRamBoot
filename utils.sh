@@ -140,6 +140,7 @@ if [[ ! -r $(which arch-chroot) ]]; then
 	umount $chroot/sys $chroot/dev $chroot/proc || true
 fi
 __umount "$chroot"
+losetup -D
 }
 
 ### TESTS
