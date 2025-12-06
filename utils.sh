@@ -47,7 +47,8 @@ function __formatUEFI
 	# -t: type code, 2: partition number, EF00: EFI System Partition, bit 2 (legacy BIOS bootable)
 	sgdisk -n 2:0:+700M -t 2:ef00 -c 2:"EFI" $disk
 	# Create rootfs partition using remaining space, 8300: Linux filesystem
-	sgdisk -n 3:0:0 -t 3:8300 -c 3:"ROOTFS" $disk
+	sgdisk -n 3:0:+3G   -t 3:8300 -c 3:"ROOTFS0" $disk
+	sgdisk -n 4:0:+2G   -t 4:8300 -c 4:"ROOTFS1" $disk
 
 }
 function formatUEFI
@@ -55,19 +56,31 @@ function formatUEFI
 	local -r disk="$1"
 
 	#__formatUEFIHybrid "$disk" #TODO not working then on chroot for grub-legacy install...
-	__formatUEFI "$disk" #extra part just f or mbr grub....
+	__formatUEFI "$disk"
 
 	losetup -P -f "$disk"
 	mkfs.vfat -F32 ${LOOPDEV}p2
 	mkfs.ext4 ${LOOPDEV}p3
+	mkfs.ext4 ${LOOPDEV}p4
+}
+UEFI_FIRST_ROOTFS_PART=3
+
+function __umount
+{
+	local -r chroot=$1
+
+	umount $chroot/boot
+	umount "$chroot"
 }
 
 function mountUEFI
 {
 	local -r loop=$1
 	local -r chroot=$2
+	local -r rootfsPart=${3-$UEFI_FIRST_ROOTFS_PART}
 
-	mount ${loop}p3 "$chroot"
+	__umount "$chroot" || true
+	mount ${loop}p${rootfsPart} "$chroot"
 	mkdir -p $chroot/boot
 	mount ${LOOPDEV}p2 $chroot/boot
 }
@@ -122,12 +135,11 @@ return $?
 function __chrootExit
 {
 local -r chroot=$1
-local -r distro=$2
 
-if [[ $distro != "ARCH" ]]; then
+if [[ ! -r $(which arch-chroot) ]]; then
 	umount $chroot/sys $chroot/dev $chroot/proc || true
 fi
-umount $chroot/boot $chroot
+__umount "$chroot"
 }
 
 ### TESTS
@@ -155,13 +167,22 @@ read -p "formatUEFI ENDED"
 
 function mountTest
 {
+	{
+	set +e
+	losetup -D
+	read -p __umount
+	__umount /mnt/tmp
+	}
+
+	read -p mountUEFI
 	losetup -P -f /tmp/vm.raw
 	mountUEFI /dev/loop0 /mnt/tmp
 }
+
 ##if __name__ == __main__
 if [[ $0 == ${BASH_SOURCE[0]} ]]; then
 
-read -p mountTest; mountTest; lsblk
+mountTest; lsblk
 read -p formatTests; formatTests
 
 fi
