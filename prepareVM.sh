@@ -18,7 +18,7 @@
 
 set -e
 
-export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/
+export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/ ARCH_CACHE=/tmp/archCACHE/
 [[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x"
 ##TODO DBG
 
@@ -30,12 +30,12 @@ SCRIPTDIR=$(dirname ${BASH_SOURCE[@]})
 CHROOT="${CHROOT-/mnt/tmp}"
 INIT_CHROOT="${INIT_CHROOT-/root/init.sh}"
 VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
-VM_DISK_SZ=${VM_DISK_SZ-'3g'}
+VM_DISK_SZ=${VM_DISK_SZ-'6g'}
 
 UEFI=${UEFI-1}
-DISTRO=${DISTRO-DEBIAN}
 LOOPDEV=${LOOPDEV-$(losetup -f)}
 
+RAMBOOT=1
 #deb/arch, most simple common names
 BASE_PKGS_0="dhcpcd curl vim git tmux tree wget fish"
 
@@ -53,14 +53,13 @@ DEBIAN_EXTRA_PKGS0=$BASE_PKGS_0
 DEBIAN_EXTRA_PKGS0+=" openssh-server netcat-openbsd pcre2-utils"
 
 
-export DISTRO=${DISTRO-"ARCH"}
 
 function ARCHInitChroot
 {
 echo """
 pacman -Syu --noconfirm $ARCH_EXTRA_PKGS0 #$ARCH_EXTRA_PKGS1
 
-mkinitcpio -P
+mkinitcpio -P || true
 
 mkdir -p /boot/grub
 grub-install --target=i386-pc /dev/loop0
@@ -88,21 +87,22 @@ __ARCH_RAMBOOT="initramfs/arch/ramBoot"
 function ARCHRamboot
 {
 cp "$__ARCH_RAMBOOT/mkinitcpio.conf"	"$CHROOT/etc"
-cp "$__ARCH_RAMBOOT/ramBoot"		"/etc/initcpio/hooks"
-touch "$CHROOT/etc/initcpio/install/ramboot"
+cp "$__ARCH_RAMBOOT/ramboot"		"$CHROOT/etc/initcpio/hooks"
+cp "$__ARCH_RAMBOOT/ramboot.install"	"$CHROOT/etc/initcpio/install/ramboot"
 }
 
 __DEB_RAMBOOT="initramfs/deb/ramBoot"
-function DEBRamboot
+function DEBIANRamboot
 {
 return		#TODO TODO
 cp "$__DEB_RAMBOOT/mkinitcpio.conf"	"$CHROOT/etc"
-cp "$__DEB_RAMBOOT/ramBoot"		"/etc/initcpio/hooks"
-touch "$CHROOT/etc/initcpio/install/ramboot"
+cp "$__DEB_RAMBOOT/ramboot"		"$CHROOT/etc/initcpio/hooks"
+cp "$__DEB_RAMBOOT/ramboot.install"	"$CHROOT/etc/initcpio/install/ramboot"
 }
 
 function ARCHBasePrepare
 {
+[[ -d "$ARCH_CACHE" ]] && cp -a "$ARCH_CACHE"/* "$CHROOT" && return 0
 pacstrap -K $CHROOT $ARCH_BASE_PKGS
 }
 
@@ -127,12 +127,12 @@ mkdir -p $CHROOT
 
 if [[ $UEFI ]]; then
 	formatUEFI "$VM_DISK_IMG"
-	mountUEFI ${LOOPDEV} "$CHROOT"
 else
+	exit 111 #TODO update for multi OS
 	formatBiosMBR "$VM_DISK_IMG"
 	mount ${LOOPDEV}p1 $CHROOT
 fi
-trap "__chrootExit $CHROOT $DISTRO|| (killall gpg-agent && umount $CHROOT); losetup -D" EXIT
+trap "__chrootExit $CHROOT || (killall gpg-agent && umount $CHROOT); losetup -D" EXIT
 ##[[ $DEBUG ]] && trap "" EXIT
 
 if [[ $DEBUG ]]; then
@@ -140,37 +140,44 @@ if [[ $DEBUG ]]; then
 	read -p "the above parts layout is good ?? "
 fi
 
-${DISTRO}BasePrepare
-grubSetSerialConsoleQemu "$CHROOT"
+p=$UEFI_FIRST_ROOTFS_PART
+for distro in ARCH DEBIAN; do
+	mountUEFI ${LOOPDEV} "$CHROOT" $((p++))
 
-# CHROOT SETUP
-# users
-echo """
-#!/bin/bash
-$DEBUG
-set -e
-export PATH=\$PATH:/sbin
+	${distro}BasePrepare
+	grubSetSerialConsoleQemu "$CHROOT"
 
-$( ${DISTRO}InitChroot )
-echo -n test | passwd -s
+	# CHROOT SETUP
+	# users
+	echo """
+	#!/bin/bash
+	$DEBUG
+	set -e
+	export PATH=\$PATH:/sbin
 
-useradd u
-echo -n test | passwd -s u
-mkdir -p /home/u && chown u:u -R /home/u
-""" > "$CHROOT/$INIT_CHROOT"
+	$( ${distro}InitChroot )
+	echo -n test | passwd -s
 
-cat "$CHROOT/$INIT_CHROOT"
+	useradd u
+	echo -n test | passwd -s u
+	mkdir -p /home/u && chown u:u -R /home/u
+	""" | tr -d '\t' > "$CHROOT/$INIT_CHROOT"
+
+	cat "$CHROOT/$INIT_CHROOT"
 
 
-if [[ $UEFI ]]; then
-	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" >>  "$CHROOT/$INIT_CHROOT"
-fi
+	if [[ $UEFI ]]; then
+		echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" >>  "$CHROOT/$INIT_CHROOT"
+	fi
 
-chmod 0700 $CHROOT/$INIT_CHROOT
-[[ $RAMBOOT ]] && ${DISTRO}Ramboot
-__chroot $CHROOT $INIT_CHROOT $DISTRO
+	chmod 0700 $CHROOT/$INIT_CHROOT
+	[[ $RAMBOOT ]] && ${distro}Ramboot
+	__chroot $CHROOT $INIT_CHROOT $distro
 
-[[ $DEBUG ]] && read -p OKKKK
-#to me gpg stays pending even at this point... blocking umount
-pgrep -f gpg | grep "$CHROOT" | xargs kill || true
-sleep 1
+	[[ $DEBUG ]] && read -p OKKKK
+	#to me gpg stays pending even at this point... blocking umount
+	pgrep -f gpg | grep "$CHROOT" | xargs kill || true
+	sleep 1
+
+	__umount "$CHROOT"
+done
