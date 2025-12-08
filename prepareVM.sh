@@ -87,17 +87,15 @@ __ARCH_RAMBOOT="initramfs/arch/ramBoot"
 function ARCHRamboot
 {
 cp "$__ARCH_RAMBOOT/mkinitcpio.conf"	"$CHROOT/etc"
-cp "$__ARCH_RAMBOOT/ramboot"		"$CHROOT/etc/initcpio/hooks"
-cp "$__ARCH_RAMBOOT/ramboot.install"	"$CHROOT/etc/initcpio/install/ramboot"
+cp -r -f "$__ARCH_RAMBOOT/*"	"$CHROOT/etc/initcpio/"
+#cp "$__ARCH_RAMBOOT/hooks/ramboot"	"$CHROOT/etc/initcpio/hooks"
+#cp "$__ARCH_RAMBOOT/install/ramboot"	"$CHROOT/etc/initcpio/install/ramboot"
 }
 
 __DEB_RAMBOOT="initramfs/deb/ramBoot"
 function DEBIANRamboot
 {
-return		#TODO TODO
-cp "$__DEB_RAMBOOT/mkinitcpio.conf"	"$CHROOT/etc"
-cp "$__DEB_RAMBOOT/ramboot"		"$CHROOT/etc/initcpio/hooks"
-cp "$__DEB_RAMBOOT/ramboot.install"	"$CHROOT/etc/initcpio/install/ramboot"
+cp -r -f "$__DEB_RAMBOOT/*"	"$CHROOT/etc/initramfs-tools/"
 }
 
 function ARCHBasePrepare
