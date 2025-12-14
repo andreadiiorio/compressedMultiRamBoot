@@ -79,8 +79,9 @@ echo """
 export PATH=\$PATH:/sbin
 
 apt install -y $DEBIAN_BASE_PKGS $DEBIAN_EXTRA_PKGS0 $DEBIAN_EXTRA_PKGS1
+echo 1 | apt install -y $DEBIAN_EXTRA_PKGS2
 
-##update-initramfs
+update-initramfs -k all -u
 
 mkdir -p /boot/grub
 grub-install --target=i386-pc /dev/loop0
@@ -92,7 +93,8 @@ __ARCH_RAMBOOT="initramfs/arch/ramBoot"
 function ARCHRamboot
 {
 cp "$__ARCH_RAMBOOT/mkinitcpio.conf"	"$CHROOT/etc"
-cp -r -f "$__ARCH_RAMBOOT/*"	"$CHROOT/etc/initcpio/"
+mkdir -p "$CHROOT/etc/initcpio/"
+cp -r -f "$__ARCH_RAMBOOT/"*	"$CHROOT/etc/initcpio/"
 #cp "$__ARCH_RAMBOOT/hooks/ramboot"	"$CHROOT/etc/initcpio/hooks"
 #cp "$__ARCH_RAMBOOT/install/ramboot"	"$CHROOT/etc/initcpio/install/ramboot"
 }
@@ -100,7 +102,8 @@ cp -r -f "$__ARCH_RAMBOOT/*"	"$CHROOT/etc/initcpio/"
 __DEB_RAMBOOT="initramfs/deb/ramBoot"
 function DEBIANRamboot
 {
-cp -r -f "$__DEB_RAMBOOT/*"	"$CHROOT/etc/initramfs-tools/"
+mkdir -p "$CHROOT/etc/initramfs-tools/"
+cp -a -f "$__DEB_RAMBOOT/"*	"$CHROOT/etc/initramfs-tools/"
 }
 
 function ARCHBasePrepare
