@@ -30,7 +30,7 @@ SCRIPTDIR=$(dirname ${BASH_SOURCE[@]})
 CHROOT="${CHROOT-/mnt/tmp}"
 INIT_CHROOT="${INIT_CHROOT-/root/init.sh}"
 VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
-VM_DISK_SZ=${VM_DISK_SZ-'7g'}
+VM_DISK_SZ=${VM_DISK_SZ-'7300M'}
 
 UEFI=${UEFI-1}
 LOOPDEV=${LOOPDEV-$(losetup -f)}
@@ -45,7 +45,7 @@ ARCH_EXTRA_PKGS0=$BASE_PKGS_0
 ARCH_EXTRA_PKGS0+=" openssh openbsd-netcat iptables nftables pcre2 pcre"
 ARCH_EXTRA_PKGS1="sqlite diffutils cryptsetup ctags"
 ARCH_EXTRA_PKGS1+=" usbutils usb_modeswitch usbguard usbview xdp-tools"
-ARCH_EXTRA_PKGS2="xorg xorg-xinit xf86-video-fbdev xf86-video-vesa i3 firefox"
+ARCH_EXTRA_PKGS2="xorg xorg-xinit xf86-video-fbdev xf86-video-vesa i3 firefox xfce4-terminal"
 
 DEBIAN_BASE_PKGS="linux-base linux-image-amd64 systemd systemd-sysv initramfs-tools"
 DEBIAN_BASE_PKGS+=" grub-efi-amd64-signed"
@@ -55,7 +55,7 @@ DEBIAN_EXTRA_PKGS0=$BASE_PKGS_0
 DEBIAN_EXTRA_PKGS0+=" openssh-server netcat-openbsd iptables nftables pcre2-utils"
 DEBIAN_EXTRA_PKGS1=" sqlite3 sqlite-utils sqlite3-tools diffutils cryptsetup universal-ctags"
 DEBIAN_EXTRA_PKGS1+=" usbutils usb-modeswitch usbguard usbview usbtop usb* xdp-tools"
-DEBIAN_EXTRA_PKGS2="xorg xinit xserver-xorg-video-fbdev i3 firefox-esr"
+DEBIAN_EXTRA_PKGS2="xorg xinit xserver-xorg-video-fbdev i3 firefox-esr xfce4-terminal"
 
 
 
