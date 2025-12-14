@@ -42,22 +42,27 @@ BASE_PKGS_0="dhcpcd curl vim git tmux tree wget fish"
 ARCH_BASE_PKGS="base linux-firmware linux-hardened grub dhcpcd sudo"
 ARCH_BASE_PKGS+=" lsof util-linux which python3 m4 patch man"
 ARCH_EXTRA_PKGS0=$BASE_PKGS_0
-ARCH_EXTRA_PKGS0+=" openssh pcre2 pcre openbsd-netcat"
-ARCH_EXTRA_PKGS1="sqlite diffutils cryptsetup ctags iptables usbutils usb_modeswitch usbguard usbview xdp-tools nvim"
-ARCH_EXTRA_PKGS1+=" xf86-video-fbdev xorg xorg-xinit i3 firefox grub"
+ARCH_EXTRA_PKGS0+=" openssh openbsd-netcat iptables nftables pcre2 pcre"
+ARCH_EXTRA_PKGS1="sqlite diffutils cryptsetup ctags"
+ARCH_EXTRA_PKGS1+=" usbutils usb_modeswitch usbguard usbview xdp-tools"
+ARCH_EXTRA_PKGS2="xorg xorg-xinit xf86-video-fbdev xf86-video-vesa i3 firefox"
 
 DEBIAN_BASE_PKGS="linux-base linux-image-amd64 systemd systemd-sysv initramfs-tools"
 DEBIAN_BASE_PKGS+=" grub-efi-amd64-signed"
-DEBIAN_BASE_PKGS+=" login sudo passwd"
+DEBIAN_BASE_PKGS+=" lsof util-linux util-linux-extra login sudo passwd iproute2"
+DEBIAN_BASE_PKGS+=" m4 patch man"
 DEBIAN_EXTRA_PKGS0=$BASE_PKGS_0
-DEBIAN_EXTRA_PKGS0+=" openssh-server netcat-openbsd pcre2-utils"
+DEBIAN_EXTRA_PKGS0+=" openssh-server netcat-openbsd iptables nftables pcre2-utils"
+DEBIAN_EXTRA_PKGS1=" sqlite3 sqlite-utils sqlite3-tools diffutils cryptsetup universal-ctags"
+DEBIAN_EXTRA_PKGS1+=" usbutils usb-modeswitch usbguard usbview usbtop usb* xdp-tools"
+DEBIAN_EXTRA_PKGS2="xorg xinit xserver-xorg-video-fbdev i3 firefox-esr"
 
 
 
 function ARCHInitChroot
 {
 echo """
-pacman -Syu --noconfirm $ARCH_EXTRA_PKGS0 #$ARCH_EXTRA_PKGS1
+pacman -Syu --noconfirm $ARCH_EXTRA_PKGS0 $ARCH_EXTRA_PKGS1 $ARCH_EXTRA_PKGS2
 
 mkinitcpio -P || true
 
@@ -73,7 +78,7 @@ function DEBIANInitChroot
 echo """
 export PATH=\$PATH:/sbin
 
-apt install -y $DEBIAN_BASE_PKGS $DEBIAN_EXTRA_PKGS0
+apt install -y $DEBIAN_BASE_PKGS $DEBIAN_EXTRA_PKGS0 $DEBIAN_EXTRA_PKGS1
 
 ##update-initramfs
 
