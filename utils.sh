@@ -45,10 +45,10 @@ function __formatUEFI
 	sgdisk -n 1:0:+1M -t 1:ef02 -c 1:"BIOS" $disk
 	# Create EFI System Partition (700MB)
 	# -t: type code, 2: partition number, EF00: EFI System Partition, bit 2 (legacy BIOS bootable)
-	sgdisk -n 2:0:+700M -t 2:ef00 -c 2:"EFI" $disk
+	sgdisk -n 2:0:+500M -t 2:ef00 -c 2:"EFI" $disk
 	# Create rootfs partition using remaining space, 8300: Linux filesystem
-	sgdisk -n 3:0:+3G   -t 3:8300 -c 3:"ROOTFS0" $disk
-	sgdisk -n 4:0:+3G   -t 4:8300 -c 4:"ROOTFS1" $disk
+	sgdisk -n 3:0:+2500M   -t 3:8300 -c 3:"ROOTFS0" $disk
+	sgdisk -n 4:0:+4200M   -t 4:8300 -c 4:"ROOTFS1" $disk
 
 }
 function formatUEFI
@@ -173,11 +173,14 @@ function mountTest
 	losetup -D
 	read -p __umount
 	__umount /mnt/tmp
+	umount /dev/loop0p4 || true
 	}
 
 	read -p mountUEFI
 	losetup -P -f /tmp/vm.raw
 	mountUEFI /dev/loop0 /mnt/tmp
+	mkdir -p /mnt/tmp1 /mnt/tmp
+	mount /dev/loop0p4 /mnt/tmp1 || true
 }
 
 ##if __name__ == __main__
