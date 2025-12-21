@@ -51,6 +51,8 @@ function __formatUEFITarRambootOnly
 }
 
 LOOPDEV_BOOTPART=2
+LOOPDEV_COMPRESSED_DISTROS=3
+
 function __formatUEFIDualWrittenOS
 {
 	local -r disk="$1"
@@ -71,9 +73,11 @@ function formatUEFI
 	local -r disk="$1"
 
 	#__formatUEFIHybrid "$disk" #TODO not working then on chroot for grub-legacy install...
-	__formatUEFI "$disk"
+	__formatUEFITarRambootOnly "$disk"
 
 	losetup -P -f "$disk"
+	while [[ ! -e ${LOOPDEV}p2 ]];do sleep 1;done
+	sleep 0.4;
 	mkfs.vfat -F32 ${LOOPDEV}p2
 
 	mkfs.ext4 -Tlargefile ${LOOPDEV}p3
@@ -134,8 +138,9 @@ with open('$chroot/etc/default/grub', 'w') as f: f.write('\n'.join(lines))
 
 }
 
-function __chroot
+function __chrootWrap
 {
+
 local -r chroot=$1
 local -r init_chroot=$2
 
@@ -145,14 +150,20 @@ else
 	mount --bind /sys $chroot/sys
 	mount --bind /dev $chroot/dev
 	mount --bind /proc $chroot/proc
+
+	mount --bind /tmp $chroot/tmp
+
 	chroot "$chroot" "$init_chroot"
 fi
 
 return $?
+
 }
 
 function __chrootExit
 {
+set +e
+
 local -r chroot=$1
 
 if [[ ! -r $(which arch-chroot) ]]; then
