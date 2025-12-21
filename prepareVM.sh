@@ -18,9 +18,8 @@
 
 set -e
 
-export DEBUG=1 DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/ ARCH_CACHE=/tmp/archCACHE/
-[[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x"
-##TODO DBG
+[[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x" && \
+	export DISTRO=DEBIAN DEB_CACHE=/tmp/debCACHE/ ARCH_CACHE=/tmp/archCACHE/
 
 umask 0022
 
@@ -29,19 +28,20 @@ SCRIPTDIR=$(dirname ${BASH_SOURCE[@]})
 
 CHROOT="${CHROOT-/mnt/tmp}"
 INIT_CHROOT="${INIT_CHROOT-/root/init.sh}"
+initChrootPath="$CHROOT/$INIT_CHROOT"
+
 VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
-VM_DISK_SZ=${VM_DISK_SZ-'7300M'}
+VM_DISK_SZ=${VM_DISK_SZ-'5000M'}
 
 UEFI=${UEFI-1}
-LOOPDEV=${LOOPDEV-$(losetup -f)}
+LOOPDEV=${LOOPDEV-$(losetup -f)} #(dflt loopdev for OSs prepare is next avail)
 
-RAMBOOT=1
 #deb/arch, most simple common names
-BASE_PKGS_0="dhcpcd curl vim git tmux tree wget fish"
+BASE_PKGS_0="dhcpcd curl vim git tmux tree wget fish sudo man"
 
-ARCH_BASE_PKGS="base linux-firmware linux-hardened grub dhcpcd sudo"
-ARCH_BASE_PKGS+=" lsof util-linux which python3 m4 patch man"
+ARCH_BASE_PKGS="base linux-firmware linux-hardened "
 ARCH_EXTRA_PKGS0=$BASE_PKGS_0
+ARCH_EXTRA_PKGS0+=" lsof util-linux which python3 m4 patch grub dhcpcd "
 ARCH_EXTRA_PKGS0+=" openssh openbsd-netcat iptables nftables pcre2 pcre"
 ARCH_EXTRA_PKGS1="sqlite diffutils cryptsetup ctags"
 ARCH_EXTRA_PKGS1+=" usbutils usb_modeswitch usbguard usbview xdp-tools"
@@ -106,18 +106,42 @@ mkdir -p "$CHROOT/etc/initramfs-tools/"
 cp -a -f "$__DEB_RAMBOOT/"*	"$CHROOT/etc/initramfs-tools/"
 }
 
-function ARCHBasePrepare
+function ARCHStrap
 {
 [[ -d "$ARCH_CACHE" ]] && cp -a "$ARCH_CACHE"/* "$CHROOT" && return 0
 pacstrap -K $CHROOT $ARCH_BASE_PKGS
 }
 
 
-function DEBIANBasePrepare
+function DEBIANStrap
 {
 [[ -d "$DEB_CACHE" ]] && cp -a "$DEB_CACHE"/* "$CHROOT" && return 0
 debootstrap --verbose --variant=buildd --merged-usr --include=grub2 stable "$CHROOT"
 
+}
+
+function initChroot
+{
+
+
+# CHROOT SETUP
+# users
+echo """
+#!/bin/bash
+$DEBUG
+set -e
+export PATH=\$PATH:/sbin
+
+$( ${distro}InitChroot )
+echo -n test | passwd -s
+
+useradd u
+echo -n test | passwd -s u
+mkdir -p /home/u && chown u:u -R /home/u
+""" | tr -d '\t' > "$initChrootPath"
+
+chmod 0700 "$initChrootPath"
+[[ $DEBUG ]] && cat "$initChrootPath"
 }
 
 ##### ##### ##### 	MAIN 		#####  #####  #####
@@ -146,43 +170,25 @@ if [[ $DEBUG ]]; then
 	read -p "the above parts layout is good ?? "
 fi
 
-p=$UEFI_FIRST_ROOTFS_PART
 for distro in DEBIAN ARCH; do
-	mountUEFI ${LOOPDEV} "$CHROOT" $((p++))
+	mountOS "${LOOPDEV}" "$CHROOT"
 
-	${distro}BasePrepare
+	${distro}Strap
 	grubSetSerialConsoleQemu "$CHROOT"
 
-	# CHROOT SETUP
-	# users
-	echo """
-	#!/bin/bash
-	$DEBUG
-	set -e
-	export PATH=\$PATH:/sbin
-
-	$( ${distro}InitChroot )
-	echo -n test | passwd -s
-
-	useradd u
-	echo -n test | passwd -s u
-	mkdir -p /home/u && chown u:u -R /home/u
-	""" | tr -d '\t' > "$CHROOT/$INIT_CHROOT"
-
-	cat "$CHROOT/$INIT_CHROOT"
-
+	initChroot
 
 	if [[ $UEFI ]]; then
-		echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" >>  "$CHROOT/$INIT_CHROOT"
+		echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" \
+			>>  "$initChrootPath"
 	fi
 
-	chmod 0700 $CHROOT/$INIT_CHROOT
-	[[ $RAMBOOT ]] && ${distro}Ramboot
-	__chroot $CHROOT $INIT_CHROOT $distro
+	${distro}Ramboot
+	__chroot $CHROOT $INIT_CHROOT
 
 	[[ $DEBUG ]] && read -p "Done $distro!!!! press anything to continue!"
 	#to me gpg stays pending even at this point... blocking umount
-	pgrep -f gpg | grep "$CHROOT" | xargs kill || true
+	pgrep -f gpg | grep "$CHROOT" | xargs kill -KILL || pkill -KILL gpg || true
 	sleep 1
 
 	cp $CHROOT/boot/grub/grub.cfg $CHROOT/boot/grub/grub.cfg.$distro

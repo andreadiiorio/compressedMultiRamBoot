@@ -36,7 +36,22 @@ function __formatUEFIHybrid
 
 }
 
-function __formatUEFI
+function __formatUEFITarRambootOnly
+{
+	local -r disk="$1"
+
+	sgdisk -Z "$disk"
+
+	sgdisk -n 1:0:+1M -t 1:ef02 -c 1:"BIOS" $disk
+	# Create EFI System Partition (700MB)
+	# -t: type code, 2: partition number, EF00: EFI System Partition, bit 2 (legacy BIOS bootable)
+	sgdisk -n 2:0:+500M -t 2:ef00 -c 2:"EFI" $disk
+	# Create rootfs partition using remaining space, 8300: Linux filesystem
+	sgdisk -n 3:0:+3500M   -t 3:8300 -c 3:"ROOTFS0" $disk
+}
+
+LOOPDEV_BOOTPART=2
+function __formatUEFIDualWrittenOS
 {
 	local -r disk="$1"
 
@@ -60,10 +75,11 @@ function formatUEFI
 
 	losetup -P -f "$disk"
 	mkfs.vfat -F32 ${LOOPDEV}p2
-	mkfs.ext4 ${LOOPDEV}p3
-	mkfs.ext4 ${LOOPDEV}p4
+
+	mkfs.ext4 -Tlargefile ${LOOPDEV}p3
+	#TODO even better to manage to just dump the tar...
 }
-UEFI_FIRST_ROOTFS_PART=3
+
 
 function __umount
 {
@@ -73,16 +89,20 @@ function __umount
 	umount "$chroot"
 }
 
-function mountUEFI
+#mount OS dirs for a later chroot from devfile=$1 at chroot_dir=$2
+#if given rootfsPart=$3 also mount it on $chroot_dir
+function mountOS
 {
 	local -r loop=$1
 	local -r chroot=$2
-	local -r rootfsPart=${3-$UEFI_FIRST_ROOTFS_PART}
+	local -r rootfsPart=$3
 
-	__umount "$chroot" || true
-	mount ${loop}p${rootfsPart} "$chroot"
-	mkdir -p $chroot/boot
-	mount ${LOOPDEV}p2 $chroot/boot
+	mkdir -p "$chroot/boot"
+	if [[ $rootfsPart ]]; then
+		__umount "$chroot" || true
+		mount ${loop}p${rootfsPart} "$chroot"
+	fi
+	mount ${LOOPDEV}p${LOOPDEV_BOOTPART} $chroot/boot
 }
 
 ## SYS-MISC
@@ -118,7 +138,6 @@ function __chroot
 {
 local -r chroot=$1
 local -r init_chroot=$2
-local -r distro=$3
 
 if [[ -r $(which arch-chroot) ]]; then
 	arch-chroot $chroot $init_chroot
