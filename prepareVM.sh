@@ -23,7 +23,6 @@ set -e
 umask 0022
 
 SCRIPTDIR=$(realpath $(dirname ${BASH_SOURCE[@]}))
-. $SCRIPTDIR/utils.sh
 
 CHROOT="${CHROOT-/mnt/tmp}"
 MAIN_CHROOT="${MAIN_CHROOT-/root/init.sh}"
@@ -34,6 +33,7 @@ VM_DISK_SZ=${VM_DISK_SZ-'5000M'}
 
 UEFI=${UEFI-1}
 LOOPDEV=${LOOPDEV-$(losetup -f)} #(dflt loopdev for OSs prepare is next avail)
+. $SCRIPTDIR/utils.sh
 
 DISTRO_AR_MNT=${DISTRO_AR_MNT-"/mnt/tmp1"}
 
@@ -52,6 +52,7 @@ ARCH_EXTRA_PKGS2="xorg xorg-xinit xf86-video-fbdev xf86-video-vesa i3 firefox xf
 DEBIAN_BASE_PKGS="linux-base linux-image-amd64 systemd systemd-sysv initramfs-tools"
 DEBIAN_BASE_PKGS+=" grub-efi-amd64-signed"
 DEBIAN_BASE_PKGS+=" lsof util-linux util-linux-extra login sudo passwd iproute2"
+DEBIAN_BASE_PKGS+=" $BASE_PKGS_0"
 DEBIAN_BASE_PKGS+=" m4 patch man"
 DEBIAN_EXTRA_PKGS0="$DEBIAN_BASE_PKGS"
 DEBIAN_EXTRA_PKGS0+=" openssh-server netcat-openbsd iptables nftables pcre2-utils"
@@ -78,12 +79,10 @@ __chrootWrap "$__chrootDir" "$PKG_CHROOT"
 function ARCHInitChroot
 {
 echo """
-pacman -Syu --noconfirm $ARCH_EXTRA_PKGS0 $ARCH_EXTRA_PKGS1 $ARCH_EXTRA_PKGS2
-
 mkinitcpio -P || true
 
 mkdir -p /boot/grub
-grub-install --target=i386-pc /dev/loop0
+grub-install --target=i386-pc $LOOPDEV
 grub-mkconfig -o /boot/grub/grub.ARCH.cfg
 #cp /boot/grub/grub.ARCH.cfg /boot/grub/grub.cfg
 """
@@ -237,10 +236,14 @@ if [[ $DEBUG && -d $CACHE ]]; then
 	for distro in ${DISTRO[@]}; do
 		__chroot="$CHROOT/$distro"
 		mkdir -p $__chroot
+		(
 		cd $__chroot
 		tar xf $CACHE/$distro.txz
 		cp $CACHE/$distro.txz $DISTRO_AR_MNT
+		) &
 	done
+	for distro in ${DISTRO[@]}; do wait -n; done
+
 	__distros=()
 	set +e	#the needed -n flag of wait would fail if nothing is started
 fi
@@ -250,14 +253,15 @@ for distro in ${__distros[@]}; do
 	__chroot="$CHROOT/$distro"
 	mkdir -p $__chroot
 	(
-	${distro}Strap 		 "$__chroot" || true
+	${distro}Strap 		 "$__chroot" #|| true
 	${distro}PkgInstall	 "$__chroot"
 	grubSetSerialConsoleQemu "$__chroot"
-	) | tee "$distro.log" &
+	) 2>&1 | tee "$distro.log" &
 done
 #NB: wait returns the status of the last ID... so do them 1 by 1
-wait -n
-wait -n
+for distro in ${__distros[@]}; do wait -n; done
+[[ $DEBUG && ! -d $CACHE ]] && read -p "distros STRAPed, now compressing"
+
 set -e
 #compress distro's dirs
 for distro in ${__distros[@]}; do
@@ -268,6 +272,7 @@ for distro in ${__distros[@]}; do
 done
 #end CACHE skippable
 
+[[ $DEBUG ]] && read -p "distro pkgs compressed&ready!, now final chroot init!"
 #create ramdisks with chroot scripts per OS
 #TODO for parallel compute at least flock on a common dir to avoid grub raceConds!
 for distro in ${DISTRO[@]}; do
@@ -278,7 +283,7 @@ for distro in ${DISTRO[@]}; do
 	mount ${LOOPDEV}p${LOOPDEV_BOOTPART} $__chroot/boot
 
 	initChroot "$distro" "$__chroot" "$CHROOT/$distro/$MAIN_CHROOT"
-	__chrootWrap "$__chroot" "$MAIN_CHROOT" | tee -a "$distro.log"
+	__chrootWrap "$__chroot" "$MAIN_CHROOT" 2>&1 | tee -a "$distro.log"
 
 	umount $__chroot/boot
 done

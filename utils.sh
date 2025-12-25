@@ -1,6 +1,7 @@
 set -ex
 
 LOOPDEV=${LOOPDEV-'/dev/loop0'}
+CHROOT="${CHROOT-/mnt/tmp}"
 
 ## DISK-UTILS
 #fdisk create menu: num, start, size/end
@@ -202,13 +203,19 @@ function mountTest
 	set +e
 	losetup -D
 	read -p __umount
-	__umount /mnt/tmp
-	umount /dev/loop0p4 || true
+	umount /dev/loop0p1
+	umount /dev/loop0p2
+	umount /dev/loop0p3
+	umount /dev/loop0p2
+	umount /dev/loop0p3
 	}
 
+
 	read -p mountUEFI
+	mkdir -p /mnt/tmp/boot /mnt/tmp1
 	losetup -P -f /tmp/vm.raw
-	mountUEFI /dev/loop0 /mnt/tmp
+	mount ${LOOPDEV}p${LOOPDEV_BOOTPART} "/mnt/tmp/boot"
+	mount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS} "/mnt/tmp1"
 	mkdir -p /mnt/tmp1 /mnt/tmp
 	mount /dev/loop0p4 /mnt/tmp1 || true
 }
