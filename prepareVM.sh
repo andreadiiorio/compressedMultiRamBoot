@@ -30,6 +30,7 @@ PKG_CHROOT="${PKG_CHROOT-/root/pkgInstall.sh}"
 
 VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
 VM_DISK_SZ=${VM_DISK_SZ-'5000M'}
+DISTRO_LOOP_SZ=${DISTRO_LOOP_SZ-"5g"}
 
 UEFI=${UEFI-1}
 LOOPDEV=${LOOPDEV-$(losetup -f)} #(dflt loopdev for OSs prepare is next avail)
@@ -188,22 +189,85 @@ fi
 ${distro}Ramboot $__chrootDir
 
 chmod 0700 "$__chrootScriptPath"
-[[ $DEBUG ]] && cat "$__chrootScriptPath"
+[[ ! $DEBUG ]] || cat "$__chrootScriptPath"
 
 }
 
+DISTRO_LOOPDEVS=()
+function prepareDistroLoop
+{
+	local -r __distro=$1
+	local -r __chroot="$CHROOT/$__distro"
+	local -r __chrootImg="$__chroot.img"
 
+	mkdir -p $__chroot
+	touch "$__chrootImg"
+	truncate -s $DISTRO_LOOP_SZ "$__chrootImg"
+
+	mkfs.ext4 "$__chrootImg"
+	#flock /tmp/ \
+	local -r __loop=$(losetup -f)
+	DISTRO_LOOPDEVS+=$__loop
+	losetup -f $__chrootImg
+	mount $__loop "$__chroot"
+}
+
+function __unpackFromCache
+{
+	local -r __distro=$1
+	local -r __chroot="$CHROOT/$__distro"
+	local -r __cachedArchive=${2-"$CACHE/$__distro.txz"}
+
+	cd $__chroot
+	tar xf "$__cachedArchive"
+	cp "$__cachedArchive" $DISTRO_AR_MNT
+
+}
+
+function installDistro
+{
+	local -r __distro=$1
+	local -r __chroot="$CHROOT/$__distro"
+
+	${__distro}Strap 	 "$__chroot" #|| true
+	${__distro}PkgInstall	 "$__chroot"
+	grubSetSerialConsoleQemu "$__chroot"
+}
+
+function compressDistro
+{
+	local -r __distro=$1
+	local -r __chroot="$CHROOT/$__distro"
+
+
+	cd $__chroot
+	tar cf /tmp/$__distro.txz -I "$COMPRESS_CMD" --exclude ./boot *
+	mv /tmp/$__distro.txz $DISTRO_AR_MNT
+}
+
+function __cleanup
+{
+	set +e
+
+	pkill -KILL gpg-agent;
+	umount ${LOOPDEV}p3;umount ${LOOPDEV}p3; ${LOOPDEV}p2;umount ${LOOPDEV}p2;
+	umount $CHROOT/boot; umount $DISTRO_AR_MNT; umount  $CHROOT/boot; umount ${LOOPDEV}p2;umount ${LOOPDEV}p2;
+	losetup -d $LOOPDEV; losetup -D
+
+	#for distro in ${DISTRO[@]}; do umount "$CHROOT/$distro"; done
+	for loop in ${DISTRO_LOOPDEVS[@]}; do
+		umount $loop;
+		losetup -d $loop;
+	done
+}
 
 ##### ##### ##### 	MAIN 		#####  #####  #####
-##if __name__ != __main__
-[[ $0 != ${BASH_SOURCE[0]} ]] && return
+[[ $0 != ${BASH_SOURCE[0]} ]] && return		##if __name__ != __main__
 
 [[ -r "$VM_DISK_IMG" ]] && echo "$VM_DISK_IMG will be created, so must not be present!" && exit 1
 
 touch $VM_DISK_IMG
 truncate -s $VM_DISK_SZ $VM_DISK_IMG
-
-mkdir -p $CHROOT
 
 if [[ $UEFI ]]; then
 	formatUEFI "$VM_DISK_IMG"
@@ -212,67 +276,40 @@ else
 	#formatBiosMBR "$VM_DISK_IMG"
 	#mount ${LOOPDEV}p1 $CHROOT
 fi
-trap	"set +e; pkill -KILL gpg-agent;
-	umount ${LOOPDEV}p3;umount ${LOOPDEV}p3; ${LOOPDEV}p2;umount ${LOOPDEV}p2;
-	umount $CHROOT/boot; umount $DISTRO_AR_MNT; umount  $CHROOT/boot; umount ${LOOPDEV}p2;umount ${LOOPDEV}p2;
-	losetup -d $LOOPDEV"  \
-	EXIT
-#losetup -d $LOOPDEV" EXIT
 
+trap __cleanup EXIT
 
 if [[ $DEBUG ]]; then
 	sgdisk -p "$LOOPDEV"; lsblk -f "$LOOPDEV";
-	read -p "the above parts layout is good ?? "
+	read -p "above there's the parts layout	"
 fi
-
 
 mkdir -p "$CHROOT/boot" "$DISTRO_AR_MNT"
 mount ${LOOPDEV}p${LOOPDEV_BOOTPART} "$CHROOT/boot"
 mount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS} "$DISTRO_AR_MNT"
 
+#Installation of base OSs: create a loopdev per OS and get the pkgs there
+
 __distros=( ${DISTRO[@]} )
-#if CACHE, just untar them instead of installing them from scrach
-if [[ $DEBUG && -d $CACHE ]]; then
+for distro in ${DISTRO[@]}; do	prepareDistroLoop $distro; done
+
+if [[ $DEBUG && -d $CACHE ]]; then 	#if CACHE, just untar them
 	for distro in ${DISTRO[@]}; do
-		__chroot="$CHROOT/$distro"
-		mkdir -p $__chroot
-		(
-		cd $__chroot
-		tar xf $CACHE/$distro.txz
-		cp $CACHE/$distro.txz $DISTRO_AR_MNT
-		) &
+		__unpackFromCache $distro &
 	done
 	for distro in ${DISTRO[@]}; do wait -n; done
+else					#install from scratch
+	for distro in ${DISTRO[@]}; do
+		(installDistro 	$distro 2>&1 | tee "$distro.log") &
+	done
+	for distro in ${DISTRO[@]}; do wait -n; done
+	[[ $DEBUG && ! -d $CACHE ]] && read -p "distros STRAPed, now compressing"
 
-	__distros=()
-	set +e	#the needed -n flag of wait would fail if nothing is started
+	for distro in ${DISTRO[@]}; do	compressDistro	$distro; done
 fi
-#NB: the following loops uses __distros so with CACHE they're skipped
-#install in a distro's subdir pkgs in parallel!
-for distro in ${__distros[@]}; do
-	__chroot="$CHROOT/$distro"
-	mkdir -p $__chroot
-	(
-	${distro}Strap 		 "$__chroot" #|| true
-	${distro}PkgInstall	 "$__chroot"
-	grubSetSerialConsoleQemu "$__chroot"
-	) 2>&1 | tee "$distro.log" &
-done
-#NB: wait returns the status of the last ID... so do them 1 by 1
-for distro in ${__distros[@]}; do wait -n; done
-[[ $DEBUG && ! -d $CACHE ]] && read -p "distros STRAPed, now compressing"
-
-set -e
-#compress distro's dirs
-for distro in ${__distros[@]}; do
-	__chroot="$CHROOT/$distro"
-	cd $__chroot
-	tar cf $distro.txz -I "$COMPRESS_CMD" --exclude ./boot *
-	mv $distro.txz $DISTRO_AR_MNT
-done
-#end CACHE skippable
 
 [[ $DEBUG ]] && read -p "distro pkgs compressed&ready!, now final chroot init!"
+
 #create ramdisks with chroot scripts per OS
 #TODO for parallel compute at least flock on a common dir to avoid grub raceConds!
 for distro in ${DISTRO[@]}; do
@@ -286,6 +323,7 @@ for distro in ${DISTRO[@]}; do
 	__chrootWrap "$__chroot" "$MAIN_CHROOT" 2>&1 | tee -a "$distro.log"
 
 	umount $__chroot/boot
+	umount $__chroot
 done
 
 cp $CHROOT/boot/grub/grub.ARCH.cfg $CHROOT/boot/grub/grub.cfg
