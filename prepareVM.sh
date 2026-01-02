@@ -18,13 +18,13 @@
 
 set -e
 
-[[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x" && export CACHE=/tmp/CACHE/
+[[ $DEBUG == 1 ]] && set -x && export DEBUG="set -x" && CACHE=${CACHE-/tmp/CACHE/}
 
 umask 0022
 
 SCRIPTDIR=$(realpath $(dirname ${BASH_SOURCE[@]}))
 
-CHROOT="${CHROOT-/mnt/tmp}"
+DST="${DST-/tmp/${0/.sh/}}"
 MAIN_CHROOT="${MAIN_CHROOT-/root/init.sh}"
 PKG_CHROOT="${PKG_CHROOT-/root/pkgInstall.sh}"
 
@@ -36,7 +36,7 @@ UEFI=${UEFI-1}
 LOOPDEV=${LOOPDEV-$(losetup -f)} #(dflt loopdev for OSs prepare is next avail)
 . $SCRIPTDIR/utils.sh
 
-DISTRO_AR_MNT=${DISTRO_AR_MNT-"/mnt/tmp1"}
+DISTRO_AR_MNT=${DISTRO_AR_MNT-"$DST/ARCHIVES"}
 
 DISTRO=( DEBIAN ARCH )
 #deb/arch, most simple common names
@@ -62,6 +62,7 @@ DEBIAN_EXTRA_PKGS1+=" usbutils usb-modeswitch usbguard usbview usbtop usb* xdp-t
 DEBIAN_EXTRA_PKGS2="xorg xinit xserver-xorg-video-fbdev i3 firefox-esr xfce4-terminal"
 
 COMPRESS_CMD=${COMPRESS_CMD-"xz -vv0T0"}
+
 
 function ARCHPkgInstall
 {
@@ -160,14 +161,14 @@ debootstrap --verbose --variant=buildd --merged-usr --include=grub2 \
 }
 
 
-function initChroot
+function chrootScriptGen
 {
 
 local -r __distro=$1
 local -r __chrootDir=$2
 local -r __chrootScriptPath=$3
 
-# CHROOT SETUP
+# DST SETUP
 # users
 echo """
 #!/bin/bash
@@ -197,7 +198,7 @@ DISTRO_LOOPDEVS=()
 function prepareDistroLoop
 {
 	local -r __distro=$1
-	local -r __chroot="$CHROOT/$__distro"
+	local -r __chroot="$DST/$__distro"
 	local -r __chrootImg="$__chroot.img"
 
 	mkdir -p $__chroot
@@ -207,15 +208,16 @@ function prepareDistroLoop
 	mkfs.ext4 "$__chrootImg"
 	#flock /tmp/ \
 	local -r __loop=$(losetup -f)
-	DISTRO_LOOPDEVS+=$__loop
 	losetup -f $__chrootImg
+	DISTRO_LOOPDEVS+=$__loop
+
 	mount $__loop "$__chroot"
 }
 
 function __unpackFromCache
 {
 	local -r __distro=$1
-	local -r __chroot="$CHROOT/$__distro"
+	local -r __chroot="$DST/$__distro"
 	local -r __cachedArchive=${2-"$CACHE/$__distro.txz"}
 
 	cd $__chroot
@@ -227,34 +229,36 @@ function __unpackFromCache
 function installDistro
 {
 	local -r __distro=$1
-	local -r __chroot="$CHROOT/$__distro"
+	local -r __chroot="$DST/$__distro"
 
 	${__distro}Strap 	 "$__chroot" #|| true
 	${__distro}PkgInstall	 "$__chroot"
-	grubSetSerialConsoleQemu "$__chroot"
 }
 
 function compressDistro
 {
 	local -r __distro=$1
-	local -r __chroot="$CHROOT/$__distro"
+	local -r __chroot="$DST/$__distro"
 
 
 	cd $__chroot
 	tar cf /tmp/$__distro.txz -I "$COMPRESS_CMD" --exclude ./boot *
 	mv /tmp/$__distro.txz $DISTRO_AR_MNT
+	cd -
 }
 
 function __cleanup
 {
 	set +e
 
+	[[ $DEBUG && ! $OK ]] && mount && read -p "__cleanup, ERR!"
+
 	pkill -KILL gpg-agent;
 	umount ${LOOPDEV}p3;umount ${LOOPDEV}p3; ${LOOPDEV}p2;umount ${LOOPDEV}p2;
-	umount $CHROOT/boot; umount $DISTRO_AR_MNT; umount  $CHROOT/boot; umount ${LOOPDEV}p2;umount ${LOOPDEV}p2;
+	umount $DST/boot; umount $DISTRO_AR_MNT; umount  $DST/boot; umount ${LOOPDEV}p2;umount ${LOOPDEV}p2;
 	losetup -d $LOOPDEV; losetup -D
 
-	#for distro in ${DISTRO[@]}; do umount "$CHROOT/$distro"; done
+	#for distro in ${DISTRO[@]}; do umount "$DST/$distro"; done
 	for loop in ${DISTRO_LOOPDEVS[@]}; do
 		umount $loop;
 		losetup -d $loop;
@@ -274,7 +278,7 @@ if [[ $UEFI ]]; then
 else
 	exit 111 #TODO update for multi OS
 	#formatBiosMBR "$VM_DISK_IMG"
-	#mount ${LOOPDEV}p1 $CHROOT
+	#mount ${LOOPDEV}p1 $DST
 fi
 
 trap __cleanup EXIT
@@ -284,8 +288,8 @@ if [[ $DEBUG ]]; then
 	read -p "above there's the parts layout	"
 fi
 
-mkdir -p "$CHROOT/boot" "$DISTRO_AR_MNT"
-mount ${LOOPDEV}p${LOOPDEV_BOOTPART} "$CHROOT/boot"
+mkdir -p "$DST/boot" "$DISTRO_AR_MNT"
+mount ${LOOPDEV}p${LOOPDEV_BOOTPART} "$DST/boot"
 mount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS} "$DISTRO_AR_MNT"
 
 #Installation of base OSs: create a loopdev per OS and get the pkgs there
@@ -303,34 +307,44 @@ else					#install from scratch
 		(installDistro 	$distro 2>&1 | tee "$distro.log") &
 	done
 	for distro in ${DISTRO[@]}; do wait -n; done
-	[[ $DEBUG && ! -d $CACHE ]] && read -p "distros STRAPed, now compressing"
-
-	for distro in ${DISTRO[@]}; do	compressDistro	$distro; done
 fi
 
-[[ $DEBUG ]] && read -p "distro pkgs compressed&ready!, now final chroot init!"
+[[ $DEBUG ]] && read -p "distro pkgs ready!, now final chroot init!"
 
 #create ramdisks with chroot scripts per OS
 #TODO for parallel compute at least flock on a common dir to avoid grub raceConds!
 for distro in ${DISTRO[@]}; do
-	__chroot="$CHROOT/$distro"
-	#cp distro /boot stuff to target /boot partition
-	cp -r $__chroot/boot/* $CHROOT/boot
+	__chroot="$DST/$distro"
+	grubSetSerialConsoleQemu "$__chroot"
+
+	#copy distro /boot/* to target /boot partition, not a must but proper
+	cp -r $__chroot/boot/* $DST/boot
 	#mount (again) the boot part into the OS's /boot for chroot ramdisk gen
 	mount ${LOOPDEV}p${LOOPDEV_BOOTPART} $__chroot/boot
+	#NB: above copied stuff should be present now in OS's /boot
 
-	initChroot "$distro" "$__chroot" "$CHROOT/$distro/$MAIN_CHROOT"
+	chrootScriptGen "$distro" "$__chroot" "$DST/$distro/$MAIN_CHROOT"
 	__chrootWrap "$__chroot" "$MAIN_CHROOT" 2>&1 | tee -a "$distro.log"
 
-	umount $__chroot/boot
-	umount $__chroot
 done
 
-cp $CHROOT/boot/grub/grub.ARCH.cfg $CHROOT/boot/grub/grub.cfg
+cp $DST/boot/grub/grub.ARCH.cfg $DST/boot/grub/grub.cfg
+wait
 
-umount "$CHROOT/boot"
+[[ $DEBUG ]] && read -p "distros STRAPed, now compressing"
+for distro in ${DISTRO[@]}; do
+	__chroot="$DST/$distro"
+
+	compressDistro	$distro
+
+	umount $__chroot/boot && umount $__chroot
+done
+
+[[ $DEBUG ]] && OK=1
+
+umount "$DST/boot"
 umount "$DISTRO_AR_MNT"
 
 #to me gpg for pacman stays pending even at this point... blocking umount
-pgrep -f gpg | grep "$CHROOT" | xargs kill -KILL || pkill -KILL gpg || true
+pgrep -f gpg | grep "$DST" | xargs kill -KILL || pkill -KILL gpg || true
 sleep 1
