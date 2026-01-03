@@ -83,7 +83,7 @@ function formatUEFI
 	mkfs.vfat -F32 ${LOOPDEV}p2
 
 	mkfs.ext4 -Tlargefile ${LOOPDEV}p3
-	sleep .5
+	sleep .4
 	dataUUID=$(lsblk -no UUID ${LOOPDEV}p3)
 
 	[[ ! -z "$dataUUID" ]] || return 1

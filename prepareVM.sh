@@ -36,7 +36,8 @@ local -r __chrootDir="$1"
 echo """
 #!/bin/bash
 set -ex
-pacman -Syu --noconfirm $ARCH_BASE_PKGS0 $ARCH_BASE_PKGS1 $ARCH_BASE_PKGS2
+pacman -Syu --noconfirm $ARCH_BASE_PKGS0 $ARCH_BASE_PKGS1 $ARCH_BASE_PKGS2 \
+ $ARCH_ADV_PKGS0 $ARCH_ADV_PKGS1 $ARCH_ADV_PKGS2
 """ > "$__chrootDir/$PKG_CHROOT"
 
 chmod 0700 "$__chrootDir/$PKG_CHROOT"
@@ -126,13 +127,90 @@ function __grubCfg
 	echo /boot/grub/grub.$__distro.cfg
 }
 
+#expects ssh pk to  be copied at /var/pk!
+function servicesInitChroot
+{
+
+echo """
+
+echo \
+\"\"\"
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+Port 2222
+\"\"\" >> /etc/ssh/sshd_config
+mkdir -p /home/u/.ssh/
+ssh-keygen -y -f /var/pk >  /home/u/.ssh/authorized_keys
+chown u:u -R /home/u/
+
+mkdir -p /etc/systemd/system/
+echo \
+\"\"\"
+#/etc/systemd/system/start.service
+[Unit]
+Description="START SCRIPT"
+
+[Service]
+Type=oneshot
+ExecStart=/root/start.sh
+
+[Install]
+WantedBy=multi-user.target
+\"\"\" > /etc/systemd/system/start.service
+
+systemctl enable start
+systemctl enable sshd
+systemctl disable dhcpcd
+
+echo \
+\"\"\"#!/bin/bash
+set -x
+
+/usr/sbin/sysctl -w net.ipv4.icmp_echo_ignore_all=1
+/usr/sbin/sysctl -w net.ipv4.conf.all.arp_announce=2
+/usr/sbin/sysctl -w net.ipv4.conf.all.arp_ignore=1
+
+/usr/sbin/sysctl -w net.ipv6.conf.all.disable_ipv6=1
+
+IP=10.0.2.15/24
+IF=\\\$(ls -a /sys/class/net/ | grep -vie lo -e wlan -e '\.' | grep -e eth -e en | head -1 )
+ip l set up \\\$IF
+ip a flush \\\$IF
+ip a add \\\$IP dev \\\$IF
+
+# IPTABLES
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+iptables -P FORWARD DROP
+
+iptables -A INPUT -p udp -m udp --sport 53 -m conntrack --ctstate ESTABLISHED -j ACCEPT
+iptables -A INPUT -p tcp -m tcp --sport 443 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A INPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --dport  2222 -j ACCEPT
+iptables -A INPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --sport  2222 -j ACCEPT
+iptables -A INPUT -j LOG
+iptables -A OUTPUT -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+iptables -A OUTPUT -p tcp -m tcp --dport 443 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --sport 2222 -j ACCEPT
+iptables -A OUTPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --dport 2222 -j ACCEPT
+
+\"\"\" > /root/start.sh
+chmod 0700 /root/start.sh
+
+"""
+
+}
 function chrootScriptGen
 {
 
 local -r __distro="$1"
 local -r __chrootDir="$2"
 local -r __chrootScriptPath="$3"
+local -r __sshPKey="$4"
 local -r ____grubCfg=$(__grubCfg "$__distro")
+
+[[ ! -r $__sshPKey ]] && return 1
+cp $__sshPKey $__chrootDir/var
 
 # TMPD SETUP
 # users
@@ -146,11 +224,19 @@ $( ${distro}InitChroot )
 grub-install --target=i386-pc $LOOPDEV
 grub-mkconfig -o $____grubCfg
 
+## USER
 echo -n test | passwd -s
 
-useradd u
+useradd u || true
+#TODO bcs of DEBUG, might already exist
+
 echo -n test | passwd -s u
 mkdir -p /home/u && chown u:u -R /home/u
+
+# SERVICES
+(
+$( servicesInitChroot )
+) || true
 """ | tr -d '\t' > "$__chrootScriptPath"
 if [[ $UEFI ]]; then
 	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" \
@@ -297,7 +383,7 @@ for distro in ${DISTRO[@]}; do
 	mount ${LOOPDEV}p${LOOPDEV_BOOTPART} $__chroot/boot
 	#NB: above copied stuff should be present now in OS's /boot
 
-	chrootScriptGen "$distro" "$__chroot" "$TMPD/$distro/$MAIN_CHROOT"
+	chrootScriptGen "$distro" "$__chroot" "$TMPD/$distro/$MAIN_CHROOT" "$SSH_PK"
 	__chrootWrap "$__chroot" "$MAIN_CHROOT" 2>&1 | tee -a "$distro.log"
 
 done

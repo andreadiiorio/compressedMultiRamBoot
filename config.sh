@@ -13,7 +13,10 @@ DISTRO_LOOP_SZ=${DISTRO_LOOP_SZ-"5g"}
 
 DISTRO_AR_MNT=${DISTRO_AR_MNT-"$TMPD/ARCHIVES"}
 
-#PKGS to install
+if [[ ! $SSH_PK ]]; then
+	SSH_PK=/tmp/sshK
+	yes | ssh-keygen -f "$SSH_PK" -trsa -b4096 -N ''
+fi
 #deb/arch, most simple common names
 BASE_PKGS0="dhcpcd curl vim git tmux tree wget fish sudo man"
 BASE_PKGS0+=" diffutils lsof util-linux which python3 m4 patch lshw dmidecode"
