@@ -36,7 +36,7 @@ local -r __chrootDir="$1"
 echo """
 #!/bin/bash
 set -ex
-pacman -Syu --noconfirm $ARCH_EXTRA_PKGS0 $ARCH_EXTRA_PKGS1 $ARCH_EXTRA_PKGS2
+pacman -Syu --noconfirm $ARCH_BASE_PKGS0 $ARCH_BASE_PKGS1 $ARCH_BASE_PKGS2
 """ > "$__chrootDir/$PKG_CHROOT"
 
 chmod 0700 "$__chrootDir/$PKG_CHROOT"
@@ -61,7 +61,7 @@ local -r __chrootDir="$1"
 echo """
 #!/bin/bash
 set -ex
-echo 1 | apt install -y $DEBIAN_BASE_PKGS $DEBIAN_EXTRA_PKGS0 $DEBIAN_EXTRA_PKGS1
+echo 1 | apt install -y $DEBIAN_BASE_PKGS0 $DEBIAN_BASE_PKGS1 $DEBIAN_BASE_PKGS2
 """ > "$__chrootDir/$PKG_CHROOT"
 
 chmod 0700 "$__chrootDir/$PKG_CHROOT"
