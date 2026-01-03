@@ -24,11 +24,11 @@ umask 0022
 
 SCRIPTDIR=$(realpath $(dirname ${BASH_SOURCE[@]}))
 
-DST="${DST-/tmp/${0/.sh/}}"
+TMPD="${TMPD-/tmp/${0/.sh/}}"
 MAIN_CHROOT="${MAIN_CHROOT-/root/init.sh}"
 PKG_CHROOT="${PKG_CHROOT-/root/pkgInstall.sh}"
 
-VM_DISK_IMG="${VM_DISK_IMG-/tmp/vm.raw}"
+VM_DISK_IMG="${VM_DISK_IMG-$TMPD/vm.raw}"
 VM_DISK_SZ=${VM_DISK_SZ-'5000M'}
 DISTRO_LOOP_SZ=${DISTRO_LOOP_SZ-"5g"}
 
@@ -36,7 +36,9 @@ UEFI=${UEFI-1}
 LOOPDEV=${LOOPDEV-$(losetup -f)} #(dflt loopdev for OSs prepare is next avail)
 . $SCRIPTDIR/utils.sh
 
-DISTRO_AR_MNT=${DISTRO_AR_MNT-"$DST/ARCHIVES"}
+DISTRO_AR_MNT=${DISTRO_AR_MNT-"$TMPD/ARCHIVES"}
+
+CONSOLE_BOOT=${CONSOLE_BOOT-1}
 
 DISTRO=( DEBIAN ARCH )
 #deb/arch, most simple common names
@@ -84,9 +86,6 @@ echo """
 mkinitcpio -P || true
 
 mkdir -p /boot/grub
-grub-install --target=i386-pc $LOOPDEV
-grub-mkconfig -o /boot/grub/grub.ARCH.cfg
-#cp /boot/grub/grub.ARCH.cfg /boot/grub/grub.cfg
 """
 }
 
@@ -114,9 +113,6 @@ export PATH=\$PATH:/sbin
 update-initramfs -k all -u
 
 mkdir -p /boot/grub
-grub-install --target=i386-pc /dev/loop0
-grub-mkconfig -o /boot/grub/grub.DEBIAN.cfg
-#cp /boot/grub/grub.DEBIAN.cfg /boot/grub/grub.cfg
 """
 }
 
@@ -161,14 +157,21 @@ debootstrap --verbose --variant=buildd --merged-usr --include=grub2 \
 }
 
 
+function __grubCfg
+{
+	local -r __distro=$1
+	echo /boot/grub/grub.$__distro.cfg
+}
+
 function chrootScriptGen
 {
 
-local -r __distro=$1
-local -r __chrootDir=$2
-local -r __chrootScriptPath=$3
+local -r __distro="$1"
+local -r __chrootDir="$2"
+local -r __chrootScriptPath="$3"
+local -r ____grubCfg=$(__grubCfg "$__distro")
 
-# DST SETUP
+# TMPD SETUP
 # users
 echo """
 #!/bin/bash
@@ -177,6 +180,9 @@ set -e
 export PATH=\$PATH:/sbin
 
 $( ${distro}InitChroot )
+grub-install --target=i386-pc $LOOPDEV
+grub-mkconfig -o $____grubCfg
+
 echo -n test | passwd -s
 
 useradd u
@@ -198,7 +204,7 @@ DISTRO_LOOPDEVS=()
 function prepareDistroLoop
 {
 	local -r __distro=$1
-	local -r __chroot="$DST/$__distro"
+	local -r __chroot="$TMPD/$__distro"
 	local -r __chrootImg="$__chroot.img"
 
 	mkdir -p $__chroot
@@ -209,7 +215,7 @@ function prepareDistroLoop
 	#flock /tmp/ \
 	local -r __loop=$(losetup -f)
 	losetup -f $__chrootImg
-	DISTRO_LOOPDEVS+=$__loop
+	DISTRO_LOOPDEVS+=($__loop)
 
 	mount $__loop "$__chroot"
 }
@@ -217,7 +223,7 @@ function prepareDistroLoop
 function __unpackFromCache
 {
 	local -r __distro=$1
-	local -r __chroot="$DST/$__distro"
+	local -r __chroot="$TMPD/$__distro"
 	local -r __cachedArchive=${2-"$CACHE/$__distro.txz"}
 
 	cd $__chroot
@@ -229,7 +235,7 @@ function __unpackFromCache
 function installDistro
 {
 	local -r __distro=$1
-	local -r __chroot="$DST/$__distro"
+	local -r __chroot="$TMPD/$__distro"
 
 	${__distro}Strap 	 "$__chroot" #|| true
 	${__distro}PkgInstall	 "$__chroot"
@@ -238,13 +244,14 @@ function installDistro
 function compressDistro
 {
 	local -r __distro=$1
-	local -r __chroot="$DST/$__distro"
+	local -r __chroot="$TMPD/$__distro"
 
 
 	cd $__chroot
+	rm -rf var/cache
 	tar cf /tmp/$__distro.txz -I "$COMPRESS_CMD" --exclude ./boot *
 	mv /tmp/$__distro.txz $DISTRO_AR_MNT
-	cd -
+	cd $SCRIPTDIR
 }
 
 function __cleanup
@@ -257,10 +264,10 @@ function __cleanup
 
 	pkill -KILL gpg-agent;
 	umount ${LOOPDEV}p3;umount ${LOOPDEV}p3; ${LOOPDEV}p2;umount ${LOOPDEV}p2;
-	umount $DST/boot; umount $DISTRO_AR_MNT; umount  $DST/boot; umount ${LOOPDEV}p2;umount ${LOOPDEV}p2;
+	umount $TMPD/boot; umount $DISTRO_AR_MNT; umount  $TMPD/boot; umount ${LOOPDEV}p2;umount ${LOOPDEV}p2;
 	losetup -d $LOOPDEV; losetup -D
 
-	#for distro in ${DISTRO[@]}; do umount "$DST/$distro"; done
+	#for distro in ${DISTRO[@]}; do umount "$TMPD/$distro"; done
 	for loop in ${DISTRO_LOOPDEVS[@]}; do
 		umount $loop;
 		losetup -d $loop;
@@ -272,15 +279,17 @@ function __cleanup
 
 [[ -r "$VM_DISK_IMG" ]] && echo "$VM_DISK_IMG will be created, so must not be present!" && exit 1
 
+mkdir -p $(dirname $VM_DISK_IMG)
 touch $VM_DISK_IMG
 truncate -s $VM_DISK_SZ $VM_DISK_IMG
+rootUUID=""
 
 if [[ $UEFI ]]; then
-	formatUEFI "$VM_DISK_IMG"
+	formatUEFI "$VM_DISK_IMG" rootUUID
 else
 	exit 111 #TODO update for multi OS
 	#formatBiosMBR "$VM_DISK_IMG"
-	#mount ${LOOPDEV}p1 $DST
+	#mount ${LOOPDEV}p1 $TMPD
 fi
 
 trap __cleanup EXIT
@@ -290,8 +299,8 @@ if [[ $DEBUG ]]; then
 	read -p "above there's the parts layout	"
 fi
 
-mkdir -p "$DST/boot" "$DISTRO_AR_MNT"
-mount ${LOOPDEV}p${LOOPDEV_BOOTPART} "$DST/boot"
+mkdir -p "$TMPD/boot" "$DISTRO_AR_MNT"
+mount ${LOOPDEV}p${LOOPDEV_BOOTPART} "$TMPD/boot"
 mount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS} "$DISTRO_AR_MNT"
 
 #Installation of base OSs: create a loopdev per OS and get the pkgs there
@@ -316,26 +325,27 @@ fi
 #create ramdisks with chroot scripts per OS
 #TODO for parallel compute at least flock on a common dir to avoid grub raceConds!
 for distro in ${DISTRO[@]}; do
-	__chroot="$DST/$distro"
-	grubSetSerialConsoleQemu "$__chroot"
+	__chroot="$TMPD/$distro"
+	[[ $CONSOLE_BOOT == 1 ]] && grubSetSerialConsoleQemu "$__chroot"
 
 	#copy distro /boot/* to target /boot partition, not a must but proper
-	cp -r $__chroot/boot/* $DST/boot
+	cp -r $__chroot/boot/* $TMPD/boot
 	#mount (again) the boot part into the OS's /boot for chroot ramdisk gen
 	mount ${LOOPDEV}p${LOOPDEV_BOOTPART} $__chroot/boot
 	#NB: above copied stuff should be present now in OS's /boot
 
-	chrootScriptGen "$distro" "$__chroot" "$DST/$distro/$MAIN_CHROOT"
+	chrootScriptGen "$distro" "$__chroot" "$TMPD/$distro/$MAIN_CHROOT"
 	__chrootWrap "$__chroot" "$MAIN_CHROOT" 2>&1 | tee -a "$distro.log"
 
 done
 
-cp $DST/boot/grub/grub.ARCH.cfg $DST/boot/grub/grub.cfg
-wait
+cp $TMPD/boot/grub/grub.ARCH.cfg $TMPD/boot/grub/grub.cfg
+__grub="$TMPD/boot/grub/grub.cfg"
+grubFixUUID "$__grub"  "$rootUUID"
 
 [[ $DEBUG ]] && read -p "distros STRAPed, now compressing"
 for distro in ${DISTRO[@]}; do
-	__chroot="$DST/$distro"
+	__chroot="$TMPD/$distro"
 
 	compressDistro	$distro
 
@@ -344,9 +354,9 @@ done
 
 [[ $DEBUG ]] && OK=1
 
-umount "$DST/boot"
+umount "$TMPD/boot"
 umount "$DISTRO_AR_MNT"
 
 #to me gpg for pacman stays pending even at this point... blocking umount
-pgrep -f gpg | grep "$DST" | xargs kill -KILL || pkill -KILL gpg || true
+pgrep -f gpg | grep "$TMPD" | xargs kill -KILL || pkill -KILL gpg || true
 sleep 1

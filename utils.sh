@@ -24,6 +24,7 @@ function formatBiosMBR
 }
 
 
+#TODO compact hybrid part with /boot, make the data part all the rest (no end?)
 function __formatUEFIHybrid
 {
 	local -r disk="$1"
@@ -72,17 +73,21 @@ function __formatUEFIDualWrittenOS
 function formatUEFI
 {
 	local -r disk="$1"
+	local -n dataUUID="$2"
 
 	#__formatUEFIHybrid "$disk" #TODO not working then on chroot for grub-legacy install...
 	__formatUEFITarRambootOnly "$disk"
 
 	losetup -P -f "$disk"
 	while [[ ! -e ${LOOPDEV}p2 ]];do sleep 1;done
-	sleep 0.4;
+	sleep .4;
 	mkfs.vfat -F32 ${LOOPDEV}p2
 
 	mkfs.ext4 -Tlargefile ${LOOPDEV}p3
-	#TODO even better to manage to just dump the tar...
+	sleep .5
+	dataUUID=$(lsblk -no UUID ${LOOPDEV}p3)
+
+	[[ ! -z "$dataUUID" ]] || return 1
 }
 
 
@@ -122,10 +127,9 @@ local -r __grub="$chroot/etc/default/grub"
 python3 -c """
 with open('$chroot/etc/default/grub') as f: lines = f.readlines()
 #remove dflts
-for i,l in enumerate(lines):
-	if any(x in l for x in ('GRUB_TIMEOUT', 'GRUB_CMDLINE_LINUX_DEFAULT',
-		'GRUB_TERMINAL', 'GRUB_SERIAL_COMMAND')):
-		lines[i]=''
+
+_TODEL=('GRUB_TIMEOUT', 'GRUB_CMDLINE_LINUX','GRUB_TERMINAL', 'GRUB_SERIAL_COMMAND')
+lines=list(filter(lambda l: all(x not in l for x in _TODEL), lines))
 
 lines.append('GRUB_TIMEOUT=1')
 lines.append('GRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=5 console=ttyS0,115200\"')
@@ -137,6 +141,32 @@ with open('$chroot/etc/default/grub', 'w') as f: f.write('\n'.join(lines))
 
 """
 
+}
+
+function grubFixUUID
+{
+local -r grubCfg="$1"
+local -r rootUUID="$2"
+
+cp "$grubCfg" "$grubCfg.auto"
+
+python3 -c """
+def getAutoUUID(s):
+	_patt  = 'root=UUID='
+	_start = s.index(_patt) + len(_patt)
+	_end   = s[_start:].index(' ')
+	out = s[_start:_start+_end]
+	assert len(out) > 1
+
+	return out
+
+with open('$grubCfg') as f: cfg = f.read()
+autoUUID = getAutoUUID(cfg)
+cfg = cfg.replace(autoUUID, '$rootUUID')
+cfg = cfg.replace(' rw ', ' ro ')
+
+with open('$grubCfg', 'w') as f: f.write(cfg)
+"""
 }
 
 function __chrootWrap
@@ -223,6 +253,7 @@ function mountTest
 ##if __name__ == __main__
 if [[ $0 == ${BASH_SOURCE[0]} ]]; then
 
+grubFixUUID /tmp/grub.ARCH.cfg uuid-custom-test
 mountTest; lsblk
 read -p formatTests; formatTests
 
