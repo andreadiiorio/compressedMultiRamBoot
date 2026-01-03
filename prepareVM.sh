@@ -251,6 +251,8 @@ function __cleanup
 {
 	set +e
 
+	cd $SCRIPTDIR
+
 	[[ $DEBUG && ! $OK ]] && mount && read -p "__cleanup, ERR!"
 
 	pkill -KILL gpg-agent;
