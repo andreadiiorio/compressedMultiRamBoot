@@ -1,7 +1,6 @@
 set -ex
 
 LOOPDEV=${LOOPDEV-'/dev/loop0'}
-CHROOT="${CHROOT-/mnt/tmp}"
 
 ## DISK-UTILS
 #fdisk create menu: num, start, size/end
