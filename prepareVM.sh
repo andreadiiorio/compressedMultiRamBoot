@@ -62,6 +62,25 @@ local -r __chrootDir="$1"
 echo """
 #!/bin/bash
 set -ex
+
+#prepare keys layout to avoid forced interaction during install
+mkdir -p /etc/default/
+echo \
+\"\"\"
+# KEYBOARD CONFIGURATION FILE
+
+# Consult the keyboard(5) manual page.
+
+XKBMODEL="pc105"
+XKBLAYOUT="us"
+XKBVARIANT=""
+XKBOPTIONS=""
+
+BACKSPACE="guess"
+\"\"\" > /etc/default/keyboard
+cat /etc/default/keyboard | debconf-set-selections
+#export DEBIAN_FRONTEND=noninteractive
+
 echo 1 | apt install -y $DEBIAN_BASE_PKGS0 $DEBIAN_BASE_PKGS1 $DEBIAN_BASE_PKGS2
 """ > "$__chrootDir/$PKG_CHROOT"
 
@@ -115,7 +134,7 @@ function DEBIANStrap
 local -r __chrootDir=$1
 mkdir -p "$__chrootDir"
 
-debootstrap --verbose --variant=buildd --merged-usr --include=grub2 \
+echo 1 | debootstrap --verbose --variant=buildd --merged-usr --include=grub2 \
 	    stable "$__chrootDir"
 
 }
@@ -127,7 +146,6 @@ function __grubCfg
 	echo /boot/grub/grub.$__distro.cfg
 }
 
-#expects ssh pk to  be copied at /var/pk!
 function servicesInitChroot
 {
 
@@ -140,8 +158,6 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 Port 2222
 \"\"\" >> /etc/ssh/sshd_config
-mkdir -p /home/u/.ssh/
-ssh-keygen -y -f /var/pk >  /home/u/.ssh/authorized_keys
 chown u:u -R /home/u/
 
 mkdir -p /etc/systemd/system/
@@ -186,13 +202,13 @@ iptables -P FORWARD DROP
 
 iptables -A INPUT -p udp -m udp --sport 53 -m conntrack --ctstate ESTABLISHED -j ACCEPT
 iptables -A INPUT -p tcp -m tcp --sport 443 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-iptables -A INPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --dport  2222 -j ACCEPT
-iptables -A INPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --sport  2222 -j ACCEPT
+iptables -A INPUT -s 10.0.2.0/24 -d 10.0.2.0/24 -p tcp -m tcp --dport  2222 -j ACCEPT
+iptables -A INPUT -s 10.0.2.0/24 -d 10.0.2.0/24 -p tcp -m tcp --sport  2222 -j ACCEPT
 iptables -A INPUT -j LOG
 iptables -A OUTPUT -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
 iptables -A OUTPUT -p tcp -m tcp --dport 443 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
-iptables -A OUTPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --sport 2222 -j ACCEPT
-iptables -A OUTPUT -s 10.0.0.0/24 -d 10.0.0.0/24 -p tcp -m tcp --dport 2222 -j ACCEPT
+iptables -A OUTPUT -s 10.0.2.0/24 -d 10.0.2.0/24 -p tcp -m tcp --sport 2222 -j ACCEPT
+iptables -A OUTPUT -s 10.0.2.0/24 -d 10.0.2.0/24 -p tcp -m tcp --dport 2222 -j ACCEPT
 
 \"\"\" > /root/start.sh
 chmod 0700 /root/start.sh
@@ -210,7 +226,9 @@ local -r __sshPKey="$4"
 local -r ____grubCfg=$(__grubCfg "$__distro")
 
 [[ ! -r $__sshPKey ]] && return 1
-cp $__sshPKey $__chrootDir/var
+
+mkdir -p $__chrootDir/home/u/.ssh/
+ssh-keygen -y -f $__sshPKey >  $__chrootDir/home/u/.ssh/authorized_keys
 
 # TMPD SETUP
 # users
@@ -391,12 +409,20 @@ done
 cp $TMPD/boot/grub/grub.ARCH.cfg $TMPD/boot/grub/grub.cfg
 __grub="$TMPD/boot/grub/grub.cfg"
 grubFixUUID "$__grub"  "$rootUUID"
-
+lsblk; df -h
 [[ $DEBUG ]] && read -p "distros STRAPed, now compressing"
 for distro in ${DISTRO[@]}; do
 	__chroot="$TMPD/$distro"
 
 	compressDistro	$distro
+
+
+	sync
+	sync
+	set +e
+	sleep 1.4;
+	lsof -f -- $__chroot/boot ; lsof -f -- $__chroot
+	set -e
 
 	umount $__chroot/boot && umount $__chroot
 done
