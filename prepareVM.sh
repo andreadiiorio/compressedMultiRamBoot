@@ -422,9 +422,12 @@ for distro in ${DISTRO[@]}; do
 	set +e
 	sleep 1.4;
 	lsof -f -- $__chroot/boot ; lsof -f -- $__chroot
+	lsof +f -- $__chroot/boot ; lsof +f -- $__chroot
+	lsof  -- $__chroot/boot ; lsof  -- $__chroot
 	set -e
 
-	umount $__chroot/boot && umount $__chroot
+	umount $__chroot/boot
+	umount $__chroot ||umount -l $__chroot
 done
 
 [[ $DEBUG ]] && OK=1
