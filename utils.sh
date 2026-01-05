@@ -49,9 +49,9 @@ function __formatUEFITarRambootOnly
 	sgdisk -n 1:0:+1M -t 1:ef02 -c 1:"BIOS" $disk
 	# Create EFI System Partition (700MB)
 	# -t: type code, 2: partition number, EF00: EFI System Partition, bit 2 (legacy BIOS bootable)
-	sgdisk -n 2:0:+500M -t 2:ef00 -c 2:"EFI" $disk
+	sgdisk -n 2:0:+${EFI_SZ} -t 2:ef00 -c 2:"EFI" $disk
 	# Create rootfs partition using remaining space, 8300: Linux filesystem
-	sgdisk -n 3:0:+3500M   -t 3:8300 -c 3:"ROOTFS0" $disk
+	sgdisk -n 3:0:+${ROOTFS0_SZ} -t 3:8300 -c 3:"ROOTFS0" $disk
 }
 
 
