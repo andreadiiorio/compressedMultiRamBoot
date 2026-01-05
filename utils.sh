@@ -2,6 +2,9 @@ set -ex
 
 LOOPDEV=${LOOPDEV-'/dev/loop0'}
 
+LOOPDEV_BOOTPART=2
+LOOPDEV_COMPRESSED_DISTROS=3
+
 ## DISK-UTILS
 #fdisk create menu: num, start, size/end
 function formatBiosMBR
@@ -51,8 +54,6 @@ function __formatUEFITarRambootOnly
 	sgdisk -n 3:0:+3500M   -t 3:8300 -c 3:"ROOTFS0" $disk
 }
 
-LOOPDEV_BOOTPART=2
-LOOPDEV_COMPRESSED_DISTROS=3
 
 function __formatUEFIDualWrittenOS
 {
@@ -78,13 +79,13 @@ function formatUEFI
 	__formatUEFITarRambootOnly "$disk"
 
 	losetup -P -f "$disk"
-	while [[ ! -e ${LOOPDEV}p2 ]];do sleep 1;done
+	while [[ ! -e ${LOOPDEV}p${LOOPDEV_BOOTPART} ]];do sleep 1;done
 	sleep .4;
-	mkfs.vfat -F32 ${LOOPDEV}p2
+	mkfs.vfat -F32 ${LOOPDEV}p${LOOPDEV_BOOTPART}
 
-	mkfs.ext4 -Tlargefile ${LOOPDEV}p3
+	mkfs.ext4 -Tlargefile ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS}
 	sleep .4
-	dataUUID=$(lsblk -no UUID ${LOOPDEV}p3)
+	dataUUID=$(lsblk -no UUID ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS})
 
 	[[ ! -z "$dataUUID" ]] || return 1
 }

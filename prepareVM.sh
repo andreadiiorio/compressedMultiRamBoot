@@ -78,8 +78,10 @@ XKBOPTIONS=""
 
 BACKSPACE="guess"
 \"\"\" > /etc/default/keyboard
-cat /etc/default/keyboard | debconf-set-selections
-#export DEBIAN_FRONTEND=noninteractive
+#cat /etc/default/keyboard | debconf-set-selections
+#TODO fix above to force keyboard layout avoiding interactions
+#the bellow opts might silently fail?
+export DEBIAN_FRONTEND=noninteractive
 
 echo 1 | apt install -y $DEBIAN_BASE_PKGS0 $DEBIAN_BASE_PKGS1 $DEBIAN_BASE_PKGS2
 """ > "$__chrootDir/$PKG_CHROOT"
@@ -257,7 +259,7 @@ $( servicesInitChroot )
 ) || true
 """ | tr -d '\t' > "$__chrootScriptPath"
 if [[ $UEFI ]]; then
-	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p2 --efi-directory=/boot" \
+	echo "grub-install --target=x86_64-efi --no-nvram ${LOOPDEV}p${LOOPDEV_BOOTPART} --efi-directory=/boot" \
 		>>  "$__chrootScriptPath"
 fi
 ${distro}Ramboot $__chrootDir
@@ -330,8 +332,12 @@ function __cleanup
 	[[ $DEBUG && ! $OK ]] && mount && read -p "__cleanup, ERR!"
 
 	pkill -KILL gpg-agent;
-	umount ${LOOPDEV}p3;umount ${LOOPDEV}p3; ${LOOPDEV}p2;umount ${LOOPDEV}p2;
-	umount $TMPD/boot; umount $DISTRO_AR_MNT; umount  $TMPD/boot; umount ${LOOPDEV}p2;umount ${LOOPDEV}p2;
+	umount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS};
+	umount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS};
+	umount ${LOOPDEV}p${LOOPDEV_BOOTPART};
+	umount ${LOOPDEV}p${LOOPDEV_BOOTPART};
+	umount ${LOOPDEV}p${LOOPDEV_BOOTPART};
+	umount $TMPD/boot; umount $DISTRO_AR_MNT; umount  $TMPD/boot;
 	losetup -d $LOOPDEV; losetup -D
 
 	#for distro in ${DISTRO[@]}; do umount "$TMPD/$distro"; done
@@ -431,6 +437,13 @@ for distro in ${DISTRO[@]}; do
 done
 
 [[ $DEBUG ]] && OK=1
+
+#make proper EFI files layout
+cd "$TMPD/boot"
+cp -r EFI/arch EFI/BOOT
+cd EFI/BOOT/
+cp grubx64.efi BOOTx64.EFI || cp * BOOTx64.EFI
+cd $SCRIPTDIR
 
 umount "$TMPD/boot"
 umount "$DISTRO_AR_MNT"
