@@ -7,7 +7,7 @@ CONSOLE_BOOT=${CONSOLE_BOOT-1}
 
 MAIN_CHROOT="${MAIN_CHROOT-/root/init.sh}"
 PKG_CHROOT="${PKG_CHROOT-/root/pkgInstall.sh}"
-COMPRESS_CMD=${COMPRESS_CMD-"xz -vv0T0"}
+COMPRESS_CMD=${COMPRESS_CMD-"xz -vvT0"}
 
 DISTRO_LOOP_SZ=${DISTRO_LOOP_SZ-"5g"}
 
@@ -31,6 +31,8 @@ ADV_PKGS0+=" acpid "
 ADV_PKGS1="testdisk foremost "
 ADV_PKGS1+=" sleuthkit parted gpart psmisc procps"
 ADV_PKGS2="termshark"
+ADV_PKGS2+=" qemu-full edk2-ovmf seabios qemu-block-iscsi"
+ADV_PKGS2+=" qemu-user-static qemu-user-static-binfmt"
 
 ARCH_BASE_PKGS="base linux-firmware linux-hardened grub"
 ARCH_BASE_PKGS0="$BASE_PKGS0 wireless_tools"
