@@ -1,5 +1,5 @@
 ##!/bin/bash
-#pyQemu, QEMU command-line and tap scripts generator for minimal&secure virtual machines creation.
+#CompressedMultiRamBoot, multi OS with a uncompression and ram-boot script, image generator for bootable usb and VirtualMachines
 #Copyright (C) 2025 Andrea Di Iorio
 #
 #This program is free software: you can redistribute it and/or modify
