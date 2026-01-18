@@ -54,7 +54,7 @@ function __formatUEFIHybrid
 
 }
 
-function __formatUEFITarRambootOnly
+function __formatUEFICompressed
 {
 	local -r disk="$1"
 
@@ -69,9 +69,10 @@ function __formatUEFITarRambootOnly
 }
 
 
-function __formatUEFIDualWrittenOS
+function __formatUEFIMultiOS
 {
 	local -r disk="$1"
+	local -n osPartSizeArr="$2"
 
 	sgdisk -Z "$disk"
 
@@ -79,18 +80,41 @@ function __formatUEFIDualWrittenOS
 	# Create EFI System Partition (700MB)
 	# -t: type code, 2: partition number, EF00: EFI System Partition, bit 2 (legacy BIOS bootable)
 	sgdisk -n 2:0:+500M -t 2:ef00 -c 2:"EFI" $disk
-	# Create rootfs partition using remaining space, 8300: Linux filesystem
-	sgdisk -n 3:0:+2500M   -t 3:8300 -c 3:"ROOTFS0" $disk
-	sgdisk -n 4:0:+4200M   -t 4:8300 -c 4:"ROOTFS1" $disk
+
+	# Create rootfs partitions space, 8300: Linux filesystem
+	local i=0
+	for p in ${osPartSizeArr[@]}; do
+		sgdisk -n 3:0:+${p}M -t 3:8300 -c 3:"ROOTFS$((i++))" $disk
+	done
 
 }
+
 function formatUEFI
+{
+	local -r disk="$1"
+	local -n osPartSizeArr="$2"
+
+	#__formatUEFIHybrid "$disk" #TODO not working then on chroot for grub-legacy install...
+	__formatUEFIMultiOS "$disk" osPartSizeArr
+
+	losetup -P -f "$disk"
+	while [[ ! -e ${LOOPDEV}p${LOOPDEV_BOOTPART} ]];do sleep 1;done
+	sleep .4;
+	mkfs.vfat -F32 ${LOOPDEV}p${LOOPDEV_BOOTPART}
+
+	for i in $(seq ${#osPartSizeArr[@]}); do
+		mkfs.ext4 ${LOOPDEV}p$((LOOPDEV_COMPRESSED_DISTROS + i))
+	done
+}
+
+
+function formatUEFICompressed
 {
 	local -r disk="$1"
 	local -n dataUUID="$2"
 
 	#__formatUEFIHybrid "$disk" #TODO not working then on chroot for grub-legacy install...
-	__formatUEFITarRambootOnly "$disk"
+	__formatUEFICompressed "$disk"
 
 	losetup -P -f "$disk"
 	while [[ ! -e ${LOOPDEV}p${LOOPDEV_BOOTPART} ]];do sleep 1;done
@@ -223,7 +247,7 @@ function formatTests
 {
 losetup -D
 TESTDISK='/tmp/d'
-rm -f "$TESTDISK" && touch "$TESTDISK" && truncate -s 1G "$TESTDISK"
+rm -f "$TESTDISK" && touch "$TESTDISK" && truncate -s 2G "$TESTDISK"
 
 formatBiosMBR  "$TESTDISK"
 sleep .1
@@ -234,6 +258,7 @@ losetup -D
 
 rm -f "$TESTDISK" && touch "$TESTDISK" && truncate -s 1G "$TESTDISK"
 
+return #TODO update test..
 formatUEFI  "$TESTDISK"
 sleep .1
 lsblk -f ${LOOPDEV}

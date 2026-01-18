@@ -270,7 +270,7 @@ chmod 0700 "$__chrootScriptPath"
 }
 
 DISTRO_LOOPDEVS=()
-function prepareDistroLoop
+function initDistroLoop
 {
 	local -r __distro=$1
 	local -r __chroot="$TMPD/$__distro"
@@ -358,7 +358,11 @@ truncate -s $VM_DISK_SZ $VM_DISK_IMG
 rootUUID=""
 
 if [[ $UEFI ]]; then
-	formatUEFI "$VM_DISK_IMG" rootUUID
+	if [[ $COMPRESSED == 1 ]]; then
+		formatUEFICompressed "$VM_DISK_IMG" rootUUID
+	else
+		formatUEFI "$VM_DISK_IMG" DISTRO_SIZES
+	fi
 else
 	exit 111 #TODO update for multi OS
 	#formatBiosMBR "$VM_DISK_IMG"
@@ -374,19 +378,28 @@ fi
 
 mkdir -p "$TMPD/boot" "$DISTRO_AR_MNT"
 mount ${LOOPDEV}p${LOOPDEV_BOOTPART} "$TMPD/boot"
-mount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS} "$DISTRO_AR_MNT"
 
-#Installation of base OSs: create a loopdev per OS and get the pkgs there
+if [[ $COMPRESS_CMD == 1 ]]; then
+	mount ${LOOPDEV}p${LOOPDEV_COMPRESSED_DISTROS} "$DISTRO_AR_MNT"
+else
+	for i in $(seq ${#DISTRO[@]}); do
+		mount ${LOOPDEV}p$((LOOPDEV_COMPRESSED_DISTROS + i)) "$TMPD/${DISTRO[$i]}"
+	done
+fi
 
-__distros=( ${DISTRO[@]} )
-for distro in ${DISTRO[@]}; do	prepareDistroLoop $distro; done
+
+#Installation of base OSs: create a loopdev per OS and get the pkgs there if COMPRESSED
+#this is required since (mostly from debian) in the grub and initram gen script
+#that the target OS install dir is on a separated FS and not in a simple dir
+#in case of COMPRESSED==0 -> there's already a dedicated os mnt per distro
+[[ $COMPRESSED == 1 ]] && for d in ${DISTRO[@]}; do initDistroLoop $d; done
 
 if [[ $DEBUG && -d $CACHE ]]; then 	#if CACHE, just untar them
 	for distro in ${DISTRO[@]}; do
 		__unpackFromCache $distro &
 	done
 	for distro in ${DISTRO[@]}; do wait -n; done
-else					#install from scratch
+else	#install from scratch
 	for distro in ${DISTRO[@]}; do
 		(installDistro 	$distro 2>&1 | tee "$distro.log") &
 	done
@@ -396,7 +409,7 @@ fi
 [[ $DEBUG ]] && read -p "distro pkgs ready!, now final chroot init!"
 
 #create ramdisks with chroot scripts per OS
-#TODO for parallel compute at least flock on a common dir to avoid grub raceConds!
+#TODO parallel compute: at least flock on a common dir to avoid grub raceConds!
 for distro in ${DISTRO[@]}; do
 	__chroot="$TMPD/$distro"
 	[[ $CONSOLE_BOOT == 1 ]] && grubSetSerialConsoleQemu "$__chroot"
