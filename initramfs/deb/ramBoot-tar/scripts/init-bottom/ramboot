@@ -1,0 +1,40 @@
+#!/bin/sh -e
+
+PREREQS=""
+
+prereqs() { echo "$PREREQS"; }
+
+case "$1" in
+    prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+#find mounted root by grepping current mount points with <root>
+mount | cut -d ' ' -f 3 | grep root || return 1
+__root="$(mount | cut -d ' ' -f 3 | grep root | tail -1)"
+##/bin/sh ##TODO no arch launch_interactive_shell
+
+trap 'set +ex; launch_interactive_shell' EXIT
+set -ex
+
+echo "Found root device: at $__root, moving mount"
+mkdir /oldroot
+mount --move $__root /oldroot
+
+echo "Setting up RAM root..."
+mount -t tmpfs tmpfs $__root -o size=95%
+
+echo "copying to ramroot"
+cd /oldroot
+cd $__root
+/bin/tarr xf /oldroot/DEBIAN.txz
+cd /
+
+echo "unmounting oldroot"
+umount /oldroot
+
+set +e
+
+trap '' EXIT

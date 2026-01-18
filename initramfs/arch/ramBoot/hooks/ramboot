@@ -1,0 +1,35 @@
+#!/bin/sh
+
+#run_hook() {
+run_latehook() {
+
+	#find mounted root by grepping current mount points with <root>
+	mount | cut -d ' ' -f 3 | grep root || return 1
+	local __root="$(mount | cut -d ' ' -f 3 | grep root | tail -1)"
+	##launch_interactive_shell	#proper subshell invoke... to experiment
+
+	read -p 'ramboot?[y]/N	' __confirm; [[ "$__confirm" == N ]] && return 1
+
+	trap 'set +ex; launch_interactive_shell' EXIT
+	set -ex
+
+	echo "Found root device: at $__root, moving mount"
+       	mkdir /oldroot
+       	mount --move $__root /oldroot
+
+	echo "Setting up RAM root..."
+	mount -t tmpfs tmpfs $__root -o size=95%
+
+	echo "copying to ramroot"
+	cd /oldroot
+	cp -a * $__root
+	cd /
+
+	echo "unmounting oldroot"
+	umount /oldroot
+
+	set +e
+
+    	trap '' EXIT
+	#launch_interactive_shell
+}
